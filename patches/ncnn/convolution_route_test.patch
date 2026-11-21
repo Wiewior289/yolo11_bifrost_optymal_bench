@@ -1,7 +1,7 @@
 diff --git a/src/layer/vulkan/convolution_vulkan.cpp b/src/layer/vulkan/convolution_vulkan.cpp
 --- a/src/layer/vulkan/convolution_vulkan.cpp
 +++ b/src/layer/vulkan/convolution_vulkan.cpp
-@@ -170,7 +170,15 @@ int Convolution_vulkan::create_pipeline(const Option& opt)
+@@ -170,8 +170,16 @@ int Convolution_vulkan::create_pipeline(const Option& opt)
          }
      }
  
@@ -18,7 +18,7 @@ diff --git a/src/layer/vulkan/convolution_vulkan.cpp b/src/layer/vulkan/convolut
  
      {
          padding = ncnn::create_layer_vulkan(ncnn::LayerType::Padding);
-@@ -878,9 +886,9 @@ int Convolution_vulkan::create_pipeline(const Option& opt)
+@@ -878,7 +886,7 @@ int Convolution_vulkan::create_pipeline(const Option& opt)
              }
          }
      }
