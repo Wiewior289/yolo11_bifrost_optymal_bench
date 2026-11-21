@@ -1,0 +1,58 @@
+diff --git a/src/layer/vulkan/convolution_vulkan.cpp b/src/layer/vulkan/convolution_vulkan.cpp
+--- a/src/layer/vulkan/convolution_vulkan.cpp
++++ b/src/layer/vulkan/convolution_vulkan.cpp
+@@ -170,6 +170,16 @@ int Convolution_vulkan::create_pipeline(const Option& opt)
+         }
+     }
+ 
+     bool is_conv1x1s1d1 = kernel_w == 1 && kernel_h == 1 && stride_w == 1 && stride_h == 1 && dilation_w == 1 && dilation_h == 1;
+     bool is_conv3x3s1d1 = kernel_w == 3 && kernel_h == 3 && stride_w == 1 && stride_h == 1 && dilation_w == 1 && dilation_h == 1;
++    const bool force_direct_route = name == "conv_7" || name == "conv_12" || name == "conv_22";
++    const bool use_sgemm_route = opt.use_sgemm_convolution && !force_direct_route
++                              && !is_conv1x1s1d1 && num_input * maxk >= 8 && num_output >= 8;
++
++    if (force_direct_route)
++    {
++        NCNN_LOGE("[CONV_ROUTE_TEST] layer=%s route=direct", name.c_str());
++    }
+ 
+     {
+         padding = ncnn::create_layer_vulkan(ncnn::LayerType::Padding);
+@@ -878,7 +888,7 @@ int Convolution_vulkan::create_pipeline(const Option& opt)
+             }
+         }
+     }
+-    else if (opt.use_sgemm_convolution && !is_conv1x1s1d1 && num_input * maxk >= 8 && num_output >= 8)
++    else if (use_sgemm_route)
+     {
+         use_cooperative_matrix = vkdev->info.support_cooperative_matrix() && opt.use_cooperative_matrix && (opt.use_fp16_storage || opt.use_fp16_packed);
+ 
+@@ -1271,7 +1281,7 @@ int Convolution_vulkan::create_pipeline(const Option& opt)
+     {
+         // pass
+     }
+-    else if (opt.use_sgemm_convolution && !is_conv1x1s1d1 && num_input * maxk >= 8 && num_output >= 8)
++    else if (use_sgemm_route)
+     {
+         if (use_cooperative_matrix)
+         {
+@@ -1736,8 +1746,10 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+     const int num_input = channels * elempack;
+ 
+     bool is_conv1x1s1d1 = kernel_w == 1 && kernel_h == 1 && stride_w == 1 && stride_h == 1 && dilation_w == 1 && dilation_h == 1;
+     bool is_conv3x3s1d1 = kernel_w == 3 && kernel_h == 3 && stride_w == 1 && stride_h == 1 && dilation_w == 1 && dilation_h == 1;
++    const bool force_direct_route = name == "conv_7" || name == "conv_12" || name == "conv_22";
++    const bool use_sgemm_route = opt.use_sgemm_convolution && !force_direct_route
++                              && !is_conv1x1s1d1 && num_input * maxk >= 8 && num_output >= 8;
+ 
+     if (opt.use_winograd_convolution && (opt.use_winograd23_convolution || opt.use_winograd43_convolution) && is_conv3x3s1d1 && num_input >= 16 && num_output >= 16)
+     {
+@@ -1976,7 +1988,7 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+ 
+         return 0;
+     }
+-    if (opt.use_sgemm_convolution && !is_conv1x1s1d1 && num_input * maxk >= 8 && num_output >= 8)
++    if (use_sgemm_route)
+     {
+         // gemm
+         top_blob.create(outw, outh, num_output / out_elempack, out_elemsize, out_elempack, opt.blob_vkallocator);
