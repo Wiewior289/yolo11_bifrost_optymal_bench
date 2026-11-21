@@ -1,7 +1,7 @@
 diff --git a/src/layer/vulkan/convolution_vulkan.cpp b/src/layer/vulkan/convolution_vulkan.cpp
 --- a/src/layer/vulkan/convolution_vulkan.cpp
 +++ b/src/layer/vulkan/convolution_vulkan.cpp
-@@ -170,6 +170,16 @@ int Convolution_vulkan::create_pipeline(const Option& opt)
+@@ -170,7 +170,15 @@ int Convolution_vulkan::create_pipeline(const Option& opt)
          }
      }
  
@@ -18,7 +18,7 @@ diff --git a/src/layer/vulkan/convolution_vulkan.cpp b/src/layer/vulkan/convolut
  
      {
          padding = ncnn::create_layer_vulkan(ncnn::LayerType::Padding);
-@@ -878,7 +888,7 @@ int Convolution_vulkan::create_pipeline(const Option& opt)
+@@ -878,9 +886,9 @@ int Convolution_vulkan::create_pipeline(const Option& opt)
              }
          }
      }
@@ -27,7 +27,7 @@ diff --git a/src/layer/vulkan/convolution_vulkan.cpp b/src/layer/vulkan/convolut
      {
          use_cooperative_matrix = vkdev->info.support_cooperative_matrix() && opt.use_cooperative_matrix && (opt.use_fp16_storage || opt.use_fp16_packed);
  
-@@ -1271,7 +1281,7 @@ int Convolution_vulkan::create_pipeline(const Option& opt)
+@@ -1271,7 +1279,7 @@ int Convolution_vulkan::create_pipeline(const Option& opt)
      {
          // pass
      }
@@ -36,7 +36,7 @@ diff --git a/src/layer/vulkan/convolution_vulkan.cpp b/src/layer/vulkan/convolut
      {
          if (use_cooperative_matrix)
          {
-@@ -1736,8 +1746,10 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+@@ -1736,7 +1744,10 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
      const int num_input = channels * elempack;
  
      bool is_conv1x1s1d1 = kernel_w == 1 && kernel_h == 1 && stride_w == 1 && stride_h == 1 && dilation_w == 1 && dilation_h == 1;
@@ -47,7 +47,7 @@ diff --git a/src/layer/vulkan/convolution_vulkan.cpp b/src/layer/vulkan/convolut
  
      if (opt.use_winograd_convolution && (opt.use_winograd23_convolution || opt.use_winograd43_convolution) && is_conv3x3s1d1 && num_input >= 16 && num_output >= 16)
      {
-@@ -1976,7 +1988,7 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+@@ -1976,7 +1987,7 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
  
          return 0;
      }
