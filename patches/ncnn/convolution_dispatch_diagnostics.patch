@@ -1,7 +1,7 @@
 diff --git a/src/layer/vulkan/convolution_vulkan.cpp b/src/layer/vulkan/convolution_vulkan.cpp
 --- a/src/layer/vulkan/convolution_vulkan.cpp
 +++ b/src/layer/vulkan/convolution_vulkan.cpp
-@@ -176,4 +176,18 @@ int Convolution_vulkan::create_pipeline(const Option& opt)
+@@ int Convolution_vulkan::create_pipeline(const Option& opt)
      const bool use_sgemm_route = opt.use_sgemm_convolution && !is_conv1x1s1d1 && num_input * maxk >= 8 && num_output >= 8;
      const bool use_winograd_route = opt.use_winograd_convolution && (opt.use_winograd23_convolution || opt.use_winograd43_convolution) && is_conv3x3s1d1 && num_input >= 16 && num_output >= 16;
      const char* selected_route = use_winograd_route ? "winograd" : (use_sgemm_route ? "sgemm" : (is_conv1x1s1d1 ? "pointwise_1x1s1d1" : "direct_generic"));
