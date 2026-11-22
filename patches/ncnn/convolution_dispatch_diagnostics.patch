@@ -17,7 +17,7 @@ diff --git a/src/layer/vulkan/convolution_vulkan.cpp b/src/layer/vulkan/convolut
 +              num_input, num_output, maxk, opt.use_fp16_arithmetic ? 1 : 0, opt.use_fp16_storage ? 1 : 0,
 +              opt.use_winograd23_convolution ? 1 : 0, opt.use_winograd43_convolution ? 1 : 0,
 +              opt.use_sgemm_convolution ? 1 : 0);
-@@ -1739,7 +1744,20 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+@@ -1739,6 +1744,19 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
      bool is_conv1x1s1d1 = kernel_w == 1 && kernel_h == 1 && stride_w == 1 && stride_h == 1 && dilation_w == 1 && dilation_h == 1;
      bool is_conv3x3s1d1 = kernel_w == 3 && kernel_h == 3 && stride_w == 1 && stride_h == 1 && dilation_w == 1 && dilation_h == 1;
      const bool use_sgemm_route = opt.use_sgemm_convolution && !is_conv1x1s1d1 && num_input * maxk >= 8 && num_output >= 8;
@@ -35,7 +35,6 @@ diff --git a/src/layer/vulkan/convolution_vulkan.cpp b/src/layer/vulkan/convolut
 +                        ((unsigned long long)(dispatcher.c + (int)pipeline->local_size_z() - 1) / pipeline->local_size_z()) : 0ull));
 +    };
 +
-     const bool use_sgemm_route = opt.use_sgemm_convolution && !is_conv1x1s1d1 && num_input * maxk >= 8 && num_output >= 8;
      if (opt.use_winograd_convolution && (opt.use_winograd23_convolution || opt.use_winograd43_convolution) && is_conv3x3s1d1 && num_input >= 16 && num_output >= 16)
      {
 @@ -1754,5 +1771,8 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
