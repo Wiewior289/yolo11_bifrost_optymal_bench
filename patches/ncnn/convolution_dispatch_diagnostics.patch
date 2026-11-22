@@ -4,7 +4,7 @@ diff --git a/src/layer/vulkan/convolution_vulkan.cpp b/src/layer/vulkan/convolut
 @@ -176,4 +176,15 @@ int Convolution_vulkan::create_pipeline(const Option& opt)
      const bool use_sgemm_route = opt.use_sgemm_convolution && !is_conv1x1s1d1 && num_input * maxk >= 8 && num_output >= 8;
      const bool use_winograd_route = opt.use_winograd_convolution && (opt.use_winograd23_convolution || opt.use_winograd43_convolution) && is_conv3x3s1d1 && num_input >= 16 && num_output >= 16;
-     const char* selected_route = use_winograd_route ? "winograd" : (use_sgemm_route ? "sgemm" : "direct");
+     const char* selected_route = use_winograd_route ? "winograd" : (use_sgemm_route ? "sgemm" : (is_conv1x1s1d1 ? "pointwise_1x1s1d1" : "direct_generic"));
      NCNN_LOGE("[CONV_ROUTE_CREATE] layer=%s route=%s fp16_arithmetic=%d fp16_storage=%d in=%d out=%d maxk=%d", name.c_str(), selected_route, opt.use_fp16_arithmetic ? 1 : 0, opt.use_fp16_storage ? 1 : 0, num_input, num_output, maxk);
 +    const char* route_reason = use_winograd_route ? "3x3_s1_d1_channels_ge_16" :
 +                               use_sgemm_route ? "sgemm_enabled_non_1x1_reduction_ge_8_out_ge_8" :
