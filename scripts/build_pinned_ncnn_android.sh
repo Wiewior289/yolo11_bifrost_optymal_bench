@@ -180,7 +180,7 @@ cmake -S "${SOURCE_DIR}" -B "${BUILD_DIR}" \
     -DNCNN_BUILD_TESTS=OFF \
     -DNCNN_BUILD_TOOLS=OFF \
     -DNCNN_BUILD_EXAMPLES=OFF \
-    -DNCNN_INSTALL_SDK=ON \\
+    -DNCNN_INSTALL_SDK=ON \
     "${DIRECT_LOCAL_SIZE_CMAKE_ARGS[@]}"
 
 cmake --build "${BUILD_DIR}" --parallel 5
