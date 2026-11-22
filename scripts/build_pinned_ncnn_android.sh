@@ -95,9 +95,23 @@ git -C "${SOURCE_DIR}" apply --check "${PATCH_SYNC}"
 git -C "${SOURCE_DIR}" apply "${PATCH_SYNC}"
 git -C "${SOURCE_DIR}" apply --unidiff-zero --check "${PATCH_ASYNC}"
 git -C "${SOURCE_DIR}" apply --unidiff-zero "${PATCH_ASYNC}"
-git -C "${SOURCE_DIR}" apply --check "${PATCH_ROUTE}"
+echo "[NCNN_PATCH] applying convolution route + route-detail diagnostics"
+if ! git -C "${SOURCE_DIR}" apply --check "${PATCH_ROUTE}"; then
+    echo "ERROR: convolution route patch does not match pinned NCNN source." >&2
+    exit 4
+fi
 git -C "${SOURCE_DIR}" apply "${PATCH_ROUTE}"
-git -C "${SOURCE_DIR}" apply --check "${PATCH_DISPATCH}"
+if ! grep -Fq '[CONV_ROUTE_DETAIL]' "${SOURCE_DIR}/src/layer/vulkan/convolution_vulkan.cpp"; then
+    echo "ERROR: route patch applied without CONV_ROUTE_DETAIL marker." >&2
+    exit 4
+fi
+echo "[NCNN_PATCH] applying per-layer Vulkan dispatch diagnostics"
+if ! git -C "${SOURCE_DIR}" apply --check "${PATCH_DISPATCH}"; then
+    echo "ERROR: dispatch diagnostics patch does not match the post-route NCNN source." >&2
+    echo "Context around create_pipeline() after the route patch:" >&2
+    sed -n '160,210p' "${SOURCE_DIR}/src/layer/vulkan/convolution_vulkan.cpp" >&2
+    exit 4
+fi
 git -C "${SOURCE_DIR}" apply "${PATCH_DISPATCH}"
 
 PATCHSET_SHA="$(cat "${PATCH_HEADER}" "${PATCH_SOURCE}" "${PATCH_SHADER}" "${PATCH_BENCHMARK}" "${PATCH_BENCHMARK_RUNTIME}" "${PATCH_SYNC}" "${PATCH_ASYNC}" "${PATCH_ROUTE}" "${PATCH_DISPATCH}" | sha256sum | awk '{print $1}')"
