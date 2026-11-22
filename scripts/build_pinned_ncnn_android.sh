@@ -71,8 +71,9 @@ PATCH_BENCHMARK_RUNTIME="${PATCH_DIR}/benchmark_runtime_gating.patch"
 PATCH_SYNC="${PATCH_DIR}/runtime_sync_timing.patch"
 PATCH_ASYNC="${PATCH_DIR}/async_vk_submit.patch"
 PATCH_ROUTE="${PATCH_DIR}/convolution_route_test.patch"
+PATCH_DISPATCH="${PATCH_DIR}/convolution_dispatch_diagnostics.patch"
 
-for patch_file in "${PATCH_HEADER}" "${PATCH_SOURCE}" "${PATCH_SHADER}" "${PATCH_BENCHMARK}" "${PATCH_BENCHMARK_RUNTIME}" "${PATCH_SYNC}" "${PATCH_ASYNC}" "${PATCH_ROUTE}"; do
+for patch_file in "${PATCH_HEADER}" "${PATCH_SOURCE}" "${PATCH_SHADER}" "${PATCH_BENCHMARK}" "${PATCH_BENCHMARK_RUNTIME}" "${PATCH_SYNC}" "${PATCH_ASYNC}" "${PATCH_ROUTE}" "${PATCH_DISPATCH}"; do
     if [[ ! -s "${patch_file}" ]]; then
         echo "ERROR: required MatMul Vulkan patch file is missing or empty: ${patch_file}" >&2
         exit 4
@@ -96,8 +97,10 @@ git -C "${SOURCE_DIR}" apply --unidiff-zero --check "${PATCH_ASYNC}"
 git -C "${SOURCE_DIR}" apply --unidiff-zero "${PATCH_ASYNC}"
 git -C "${SOURCE_DIR}" apply --check "${PATCH_ROUTE}"
 git -C "${SOURCE_DIR}" apply "${PATCH_ROUTE}"
+git -C "${SOURCE_DIR}" apply --check "${PATCH_DISPATCH}"
+git -C "${SOURCE_DIR}" apply "${PATCH_DISPATCH}"
 
-PATCHSET_SHA="$(cat "${PATCH_HEADER}" "${PATCH_SOURCE}" "${PATCH_SHADER}" "${PATCH_BENCHMARK}" "${PATCH_BENCHMARK_RUNTIME}" "${PATCH_SYNC}" "${PATCH_ASYNC}" "${PATCH_ROUTE}" | sha256sum | awk '{print $1}')"
+PATCHSET_SHA="$(cat "${PATCH_HEADER}" "${PATCH_SOURCE}" "${PATCH_SHADER}" "${PATCH_BENCHMARK}" "${PATCH_BENCHMARK_RUNTIME}" "${PATCH_SYNC}" "${PATCH_ASYNC}" "${PATCH_ROUTE}" "${PATCH_DISPATCH}" | sha256sum | awk '{print $1}')"
 if [[ ! "${PATCHSET_SHA}" =~ ^[0-9a-f]{64}$ ]]; then
     echo "ERROR: failed to calculate NCNN patchset SHA." >&2
     exit 4
@@ -106,7 +109,7 @@ fi
 echo "NCNN_SOURCE=${SOURCE_DIR}"
 echo "NCNN_SOURCE_SHA=${ACTUAL_SHA}"
 echo "NCNN_SOURCE_STATUS=PINNED_BASE_WITH_LOCAL_PATCHSET"
-echo "NCNN_PATCHES=MATMUL_VULKAN_FP32_ACCUMULATE+BENCHMARK_TIMESTAMP_SAFETY+RUNTIME_BENCHMARK_GATING+RUNTIME_SYNC_TIMING+ASYNC_VK_SUBMIT+PER_LAYER_DIRECT_ROUTE_DIAGNOSTIC"
+echo "NCNN_PATCHES=MATMUL_VULKAN_FP32_ACCUMULATE+BENCHMARK_TIMESTAMP_SAFETY+RUNTIME_BENCHMARK_GATING+RUNTIME_SYNC_TIMING+ASYNC_VK_SUBMIT+PER_LAYER_DIRECT_ROUTE_DIAGNOSTIC+PER_LAYER_DISPATCH_DIAGNOSTICS"
 echo "NCNN_PATCHSET_SHA=${PATCHSET_SHA}"
 
 # Remove previous generated outputs so no old library can survive the reset.
