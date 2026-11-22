@@ -57,6 +57,23 @@ The NCNN route diagnostic uses the per-layer masked `Option`. There is no longer
 
 Clear a property by setting it to an empty value or rebooting the device. Capture the configuration and route logs with each benchmark so results remain attributable to the exact layer settings.
 
+Route/configuration log capture:
+
+```sh
+adb logcat -c
+adb logcat -v threadtime -s Yolo11_AHB_MaliG72:I ncnn:V '*:S'
+```
+
+## Mali hardware-counter interface discovery
+
+Before selecting a counter backend, enumerate what this Android kernel and Mali driver actually expose. The probe mounts debugfs if possible and lists candidate Mali/HWCNT/PRFCNT nodes; it does not write to driver controls or assume that PMU access is enabled.
+
+```sh
+./scripts/probe_mali_hwcnt.sh | tee mali_hwcnt_probe.txt
+```
+
+The output determines whether the device exposes a usable kbase counter interface, a vendor-specific debugfs interface, or no userspace PMU interface. A missing node is not evidence that the GPU has no counters; it means this kernel/driver does not expose that path to this probe.
+
 ## Enabling actual per-layer timings
 
 NCNN's CPU and Vulkan per-layer timers are compiled into the NCNN library behind `NCNN_BENCHMARK`. The repository builder configures `-DNCNN_BENCHMARK=ON`; defining the macro only for the Android app does not change an already-built `libncnn`.
