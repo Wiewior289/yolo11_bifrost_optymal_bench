@@ -50,10 +50,10 @@ class MainActivity : AppCompatActivity() {
     private val selectedComputeMode: Int = Yolo11Ncnn.COMPUTE_MATMUL_VULKAN
     @Volatile private var modeGeneration: Long = 0L
     private var modelSelectorInitialized = false
-    @Volatile private var selectedModelType: Int = Yolo11Ncnn.MODEL_YOLO11N
-    @Volatile private var modelInputSize: Int = MODEL_INPUT_SIZE_MIN
+    @Volatile private var selectedModelType: Int = Yolo11Ncnn.MODEL_YOLO11S
+    @Volatile private var modelInputSize: Int = MODEL_INPUT_SIZE_MAX
     @Volatile private var asyncDrainPending: Boolean = false
-    private var selectableModelTypes: List<Int> = listOf(Yolo11Ncnn.MODEL_YOLO11N)
+    private var selectableModelTypes: List<Int> = listOf(Yolo11Ncnn.MODEL_YOLO11S, Yolo11Ncnn.MODEL_YOLO11N)
     private lateinit var telemetryServer: TelemetryServer
     private lateinit var backgroundInitExecutor: ExecutorService
     private lateinit var gpuFrameExecutor: ExecutorService
@@ -141,15 +141,24 @@ class MainActivity : AppCompatActivity() {
         }
 
         val assetNames = assets.list("")?.toSet() ?: emptySet()
-        val modelTypes = mutableListOf(Yolo11Ncnn.MODEL_YOLO11N)
-        val modelLabels = mutableListOf("YOLO11n (Nano)")
+        val modelTypes = mutableListOf<Int>()
+        val modelLabels = mutableListOf<String>()
         if (assetNames.contains("yolo11s.param") && assetNames.contains("yolo11s.bin")) {
+            // Default model is YOLO11s; keep it as the first selector entry.
             modelTypes.add(Yolo11Ncnn.MODEL_YOLO11S)
             modelLabels.add("YOLO11s (Small)")
+            modelTypes.add(Yolo11Ncnn.MODEL_YOLO11N)
+            modelLabels.add("YOLO11n (Nano)")
+            selectedModelType = Yolo11Ncnn.MODEL_YOLO11S
         } else {
             Log.w(TAG, "YOLO11s selector disabled: both yolo11s.param and yolo11s.bin must exist in app/src/main/assets")
+            modelTypes.add(Yolo11Ncnn.MODEL_YOLO11N)
+            modelLabels.add("YOLO11n (Nano)")
+            selectedModelType = Yolo11Ncnn.MODEL_YOLO11N
         }
         selectableModelTypes = modelTypes
+        // Start at the largest supported test resolution; the user can reduce it afterwards.
+        modelInputSize = MODEL_INPUT_SIZE_MAX
 
         val modelSpinner = Spinner(this)
         val modelAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, modelLabels)
