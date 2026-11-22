@@ -51,7 +51,12 @@ The two lists are independent and may overlap. This gives four useful combinatio
 Expected diagnostics:
 - `FP32_LAYER_CONFIG`: accepted FP32 layer indices and resulting feature masks.
 - `DIRECT_LAYER_CONFIG`: accepted Direct layer indices and resulting feature masks.
-- `[CONV_ROUTE_CREATE]`: route selected at pipeline creation, plus effective FP16 arithmetic/storage flags and convolution dimensions.
+- `[CONV_ROUTE_CREATE]`: compact route selected at pipeline creation.
+- `[CONV_ROUTE_DETAIL]`: route reason and the exact kernel, stride, dilation, input/output shape, Cin/Cout, maxk and relevant global algorithm flags. Route labels distinguish `pointwise_1x1s1d1` from `direct_generic`.
+- `[WINOGRAD_SELECT]`: runtime F23/F43 selection, input/output geometry and cooperative-matrix state.
+- `[CONV_DISPATCH]`: one record per recorded convolution dispatch stage, with route, stage, logical dispatcher dimensions, actual pipeline local size and calculated workgroup count. Winograd emits separate input-transform, GEMM and output-transform records; SGEMM and pointwise report their GEMM/pointwise dispatch; generic Direct reports its convolution dispatch.
+
+The dispatch record uses the pipeline's final `local_size_x/y/z()` values after pipeline creation, not the requested local size. The `dispatcher` fields are the global work dimensions passed to `VkCompute::record_pipeline()`; `groups` is the ceiling-divided workgroup count on each axis multiplied together. This is dispatch geometry, not a measurement of occupancy or active Mali cores.
 
 The NCNN route diagnostic uses the per-layer masked `Option`. There is no longer a hardcoded list of `conv_7`, `conv_12` and `conv_22`; those layers are selected through `debug.yolo11.direct_layers` like any other convolution.
 
@@ -63,6 +68,18 @@ Route/configuration log capture:
 adb logcat -c
 adb logcat -v threadtime -s Yolo11_AHB_MaliG72:I ncnn:V '*:S'
 ```
+
+
+## Interpreting per-layer Vulkan timestamp coverage
+
+The app summary distinguishes:
+- `layers_total`: all NCNN graph layers.
+- `timed`: layers with a valid start/end timestamp pair.
+- `untimed`: layers whose two timestamp slots are both zero (the NCNN Input layer is expected to be in this category because it returns before timestamp recording).
+- `incomplete_pairs`: only partially populated or invalid timestamp pairs.
+- `query_read_partial`: the Vulkan query read returned the partial-availability status. This is not synonymous with missing layer timings; correlate it with `untimed` and `incomplete_pairs`.
+
+For the YOLO11 graph with 257 layers, the expected complete coverage is 256 timed layers, one untimed Input layer, and zero incomplete pairs. The final graph layer can still be timed.
 
 ## Mali hardware-counter interface discovery
 
