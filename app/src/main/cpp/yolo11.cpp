@@ -139,6 +139,7 @@ static void log_gpu_layer_benchmark(ncnn::VkCompute& command, const ncnn::Net& n
     }
 
     size_t available_pairs = 0;
+    size_t untimed_layers = 0;
     size_t incomplete_pairs = 0;
     double total_gpu_us = 0.0;
     const double timestamp_period_ns = network.vulkan_device()->info.timestamp_period();
@@ -146,7 +147,11 @@ static void log_gpu_layer_benchmark(ncnn::VkCompute& command, const ncnn::Net& n
         const uint64_t start = timestamps[i * 2];
         const uint64_t end = timestamps[i * 2 + 1];
         if (start == 0 || end == 0 || end < start) {
-            if (start != 0 || end != 0) ++incomplete_pairs;
+            if (start == 0 && end == 0) {
+                ++untimed_layers;
+            } else {
+                ++incomplete_pairs;
+            }
             continue;
         }
 
@@ -160,10 +165,10 @@ static void log_gpu_layer_benchmark(ncnn::VkCompute& command, const ncnn::Net& n
              layer->name.c_str(), duration_us);
     }
 
-    LOGI("[NCNN_BENCHMARK_GPU_SUMMARY] frame=%lld phase=%s layers=%zu timed=%zu incomplete=%zu "
-         "partial=%d total_layer_gpu_us=%.2lf timestamp_period_ns=%.6f",
-         (long long)frame_id, completion_phase, layers.size(), available_pairs, incomplete_pairs,
-         query_ret == 1 ? 1 : 0, total_gpu_us, timestamp_period_ns);
+    LOGI("[NCNN_BENCHMARK_GPU_SUMMARY] frame=%lld phase=%s layers_total=%zu timed=%zu untimed=%zu incomplete_pairs=%zu "
+         "query_read_partial=%d total_layer_gpu_us=%.2lf timestamp_period_ns=%.6f",
+         (long long)frame_id, completion_phase, layers.size(), available_pairs, untimed_layers,
+         incomplete_pairs, query_ret == 1 ? 1 : 0, total_gpu_us, timestamp_period_ns);
 }
 #endif // NCNN_BENCHMARK
 
