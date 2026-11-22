@@ -145,11 +145,11 @@ if ! git -C "${SOURCE_DIR}" apply --check "${PATCH_DISPATCH}"; then
 fi
 git -C "${SOURCE_DIR}" apply "${PATCH_DISPATCH}"
 echo "[NCNN_PATCH] applying opt-in Direct Convolution local-size override"
-if ! git -C "${SOURCE_DIR}" apply --check "${PATCH_DIRECT_LOCAL_SIZE}"; then
+if ! git -C "${SOURCE_DIR}" apply --unidiff-zero --check "${PATCH_DIRECT_LOCAL_SIZE}"; then
     echo "ERROR: Direct Convolution local-size patch does not match the post-diagnostics pinned NCNN source." >&2
     exit 4
 fi
-git -C "${SOURCE_DIR}" apply "${PATCH_DIRECT_LOCAL_SIZE}"
+git -C "${SOURCE_DIR}" apply --unidiff-zero "${PATCH_DIRECT_LOCAL_SIZE}"
 
 PATCHSET_SHA="$(cat "${PATCH_HEADER}" "${PATCH_SOURCE}" "${PATCH_SHADER}" "${PATCH_BENCHMARK}" "${PATCH_BENCHMARK_RUNTIME}" "${PATCH_SYNC}" "${PATCH_ASYNC}" "${PATCH_ROUTE}" "${PATCH_DISPATCH}" "${PATCH_DIRECT_LOCAL_SIZE}" | sha256sum | awk '{print $1}')"
 if [[ ! "${PATCHSET_SHA}" =~ ^[0-9a-f]{64}$ ]]; then
