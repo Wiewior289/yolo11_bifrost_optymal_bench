@@ -1,14 +1,17 @@
 diff --git a/src/layer/vulkan/convolution_vulkan.cpp b/src/layer/vulkan/convolution_vulkan.cpp
 --- a/src/layer/vulkan/convolution_vulkan.cpp
 +++ b/src/layer/vulkan/convolution_vulkan.cpp
-@@ -176,4 +176,15 @@ int Convolution_vulkan::create_pipeline(const Option& opt)
+@@ -176,4 +176,18 @@ int Convolution_vulkan::create_pipeline(const Option& opt)
      const bool use_sgemm_route = opt.use_sgemm_convolution && !is_conv1x1s1d1 && num_input * maxk >= 8 && num_output >= 8;
      const bool use_winograd_route = opt.use_winograd_convolution && (opt.use_winograd23_convolution || opt.use_winograd43_convolution) && is_conv3x3s1d1 && num_input >= 16 && num_output >= 16;
      const char* selected_route = use_winograd_route ? "winograd" : (use_sgemm_route ? "sgemm" : (is_conv1x1s1d1 ? "pointwise_1x1s1d1" : "direct_generic"));
      NCNN_LOGE("[CONV_ROUTE_CREATE] layer=%s route=%s fp16_arithmetic=%d fp16_storage=%d in=%d out=%d maxk=%d", name.c_str(), selected_route, opt.use_fp16_arithmetic ? 1 : 0, opt.use_fp16_storage ? 1 : 0, num_input, num_output, maxk);
 +    const char* route_reason = use_winograd_route ? "3x3_s1_d1_channels_ge_16" :
-+                               use_sgemm_route ? "sgemm_enabled_non_1x1_reduction_ge_8_out_ge_8" :
-+                               is_conv1x1s1d1 ? "dedicated_1x1_s1_d1" : "generic_direct_fallback";
++                               use_sgemm_route ? "sgemm_eligible" :
++                               is_conv1x1s1d1 ? "dedicated_1x1_s1_d1" :
++                               !opt.use_sgemm_convolution ? "sgemm_disabled" :
++                               num_input * maxk < 8 ? "sgemm_reduction_below_8" :
++                               num_output < 8 ? "sgemm_output_channels_below_8" : "generic_direct_fallback";
 +    NCNN_LOGE("[CONV_ROUTE_DETAIL] layer=%s route=%s reason=%s kernel=%dx%d stride=%dx%d dilation=%dx%d "
 +              "input=%dx%dx%d output=%dx%dx%d Cin=%d Cout=%d maxk=%d fp16_arithmetic=%d fp16_storage=%d "
 +              "winograd23=%d winograd43=%d sgemm_enabled=%d",
