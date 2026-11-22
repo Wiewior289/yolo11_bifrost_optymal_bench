@@ -41,7 +41,7 @@ else
 fi
 
 echo "=== SYSFS COUNTER / INSTRUMENTATION NODES ==="
-find /sys/devices /sys/class -maxdepth 8 \\( -iname '*mali*' -o -iname '*hwcnt*' -o -iname '*prfcnt*' -o -iname '*counter*' \\) -print 2>/dev/null |
+find /sys/devices /sys/class -maxdepth 8 \( -iname '*mali*' -o -iname '*hwcnt*' -o -iname '*prfcnt*' -o -iname '*counter*' \) -print 2>/dev/null |
     sort | head -300
 
 echo "=== RELEVANT KERNEL CONFIG ==="

@@ -37,7 +37,8 @@ Layer indices are NCNN network indices, not convolution names. The app applies t
 
 ```sh
 adb shell su -c 'setprop debug.yolo11.fp32_layers 9,11'
-adb shell su -c 'setprop debug.yolo11.direct_layers 205,207'
+# Replace 9,11 below with actual Convolution layer indices from the NCNN_LAYER inventory.
+adb shell su -c 'setprop debug.yolo11.direct_layers 9,11'
 adb shell su -c 'setprop debug.yolo11.layer_benchmark 1'
 ```
 
