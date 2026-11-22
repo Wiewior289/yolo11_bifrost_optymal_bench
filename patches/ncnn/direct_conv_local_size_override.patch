@@ -1,7 +1,7 @@
 diff --git a/src/layer/vulkan/convolution_vulkan.cpp b/src/layer/vulkan/convolution_vulkan.cpp
 --- a/src/layer/vulkan/convolution_vulkan.cpp
 +++ b/src/layer/vulkan/convolution_vulkan.cpp
-@@ -1473,7 +1473,38 @@
+@@ -1473,6 +1473,38 @@
          }
  
          pipeline_convolution = new Pipeline(vkdev);
