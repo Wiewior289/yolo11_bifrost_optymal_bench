@@ -29,7 +29,9 @@ DIRECT_Z="${NCNN_CONV_DIRECT_LOCAL_SIZE_Z:-}"
 DIRECT_LOCAL_SIZE_CMAKE_ARGS=()
 DIRECT_SET_COUNT=0
 for value in "${DIRECT_X}" "${DIRECT_Y}" "${DIRECT_Z}"; do
-    [[ -n "${value}" ]] && DIRECT_SET_COUNT=$((DIRECT_SET_COUNT + 1))
+    if [[ -n "${value}" ]]; then
+        DIRECT_SET_COUNT=$((DIRECT_SET_COUNT + 1))
+    fi
 done
 if [[ "${DIRECT_SET_COUNT}" -ne 0 && "${DIRECT_SET_COUNT}" -ne 3 ]]; then
     echo "ERROR: set all of NCNN_CONV_DIRECT_LOCAL_SIZE_X/Y/Z, or none of them." >&2
