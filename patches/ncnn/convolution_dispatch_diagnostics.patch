@@ -20,13 +20,14 @@ diff --git a/src/layer/vulkan/convolution_vulkan.cpp b/src/layer/vulkan/convolut
 +              num_input, num_output, maxk, opt.use_fp16_arithmetic ? 1 : 0, opt.use_fp16_storage ? 1 : 0,
 +              opt.use_winograd23_convolution ? 1 : 0, opt.use_winograd43_convolution ? 1 : 0,
 +              opt.use_sgemm_convolution ? 1 : 0);
-@@ -1739,6 +1744,19 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+@@ -1739,6 +1744,20 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
      bool is_conv1x1s1d1 = kernel_w == 1 && kernel_h == 1 && stride_w == 1 && stride_h == 1 && dilation_w == 1 && dilation_h == 1;
      bool is_conv3x3s1d1 = kernel_w == 3 && kernel_h == 3 && stride_w == 1 && stride_h == 1 && dilation_w == 1 && dilation_h == 1;
      const bool use_sgemm_route = opt.use_sgemm_convolution && !is_conv1x1s1d1 && num_input * maxk >= 8 && num_output >= 8;
  
-+    const auto log_dispatch = [this](const char* route, const char* stage, const Pipeline* pipeline, const VkMat& dispatcher)
++    const auto log_dispatch = [this, &opt](const char* route, const char* stage, const Pipeline* pipeline, const VkMat& dispatcher)
 +    {
++        if (!opt.use_benchmark) return;
 +        NCNN_LOGE("[CONV_DISPATCH] layer=%s route=%s stage=%s dispatcher=%dx%dx%d local=%ux%ux%u groups=%llu",
 +                  name.c_str(), route, stage, dispatcher.w, dispatcher.h, dispatcher.c,
 +                  pipeline ? pipeline->local_size_x() : 0u,
@@ -44,7 +45,7 @@ diff --git a/src/layer/vulkan/convolution_vulkan.cpp b/src/layer/vulkan/convolut
                  pre_winograd43 = false;
          }
  
-+        NCNN_LOGE("[WINOGRAD_SELECT] layer=%s variant=%s input=%dx%d output=%dx%d cooperative_matrix=%d",
++        if (opt.use_benchmark) NCNN_LOGE("[WINOGRAD_SELECT] layer=%s variant=%s input=%dx%d output=%dx%d cooperative_matrix=%d",
 +                  name.c_str(), pre_winograd43 ? "F43" : "F23", w, h, outw, outh, use_cooperative_matrix ? 1 : 0);
 +
          if (pre_winograd43)
