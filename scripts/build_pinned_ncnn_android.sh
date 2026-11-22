@@ -132,7 +132,7 @@ cmake -S "${SOURCE_DIR}" -B "${BUILD_DIR}" \
     -DNCNN_BUILD_EXAMPLES=OFF \
     -DNCNN_INSTALL_SDK=ON
 
-cmake --build "${BUILD_DIR}" --parallel
+cmake --build "${BUILD_DIR}" --parallel 5
 cmake --install "${BUILD_DIR}"
 
 NCNN_CONFIG_DIR="${INSTALL_PREFIX}/lib/cmake/ncnn"
