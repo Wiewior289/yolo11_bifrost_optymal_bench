@@ -1,0 +1,138 @@
+diff --git a/src/layer/vulkan/convolution_vulkan.cpp b/src/layer/vulkan/convolution_vulkan.cpp
+--- a/src/layer/vulkan/convolution_vulkan.cpp
++++ b/src/layer/vulkan/convolution_vulkan.cpp
+@@ -176,6 +176,14 @@ int Convolution_vulkan::create_pipeline(const Option& opt)
+     const bool use_sgemm_route = opt.use_sgemm_convolution && !is_conv1x1s1d1 && num_input * maxk >= 8 && num_output >= 8;
+     const bool use_winograd_route = opt.use_winograd_convolution && (opt.use_winograd23_convolution || opt.use_winograd43_convolution) && is_conv3x3s1d1 && num_input >= 16 && num_output >= 16;
+     const char* selected_route = use_winograd_route ? "winograd" : (use_sgemm_route ? "sgemm" : "direct");
+     NCNN_LOGE("[CONV_ROUTE_CREATE] layer=%s route=%s fp16_arithmetic=%d fp16_storage=%d in=%d out=%d maxk=%d", name.c_str(), selected_route, opt.use_fp16_arithmetic ? 1 : 0, opt.use_fp16_storage ? 1 : 0, num_input, num_output, maxk);
++    const char* route_reason = use_winograd_route ? "3x3_s1_d1_channels_ge_16" :
++                               use_sgemm_route ? "sgemm_enabled_non_1x1_reduction_ge_8_out_ge_8" :
++                               is_conv1x1s1d1 ? "dedicated_1x1_s1_d1" : "generic_direct_fallback";
++    NCNN_LOGE("[CONV_ROUTE_DETAIL] layer=%s route=%s reason=%s kernel=%dx%d stride=%dx%d dilation=%dx%d "
++              "input=%dx%dx%d output=%dx%dx%d Cin=%d Cout=%d maxk=%d fp16_arithmetic=%d fp16_storage=%d "
++              "winograd23=%d winograd43=%d sgemm_enabled=%d",
++              name.c_str(), selected_route, route_reason, kernel_w, kernel_h, stride_w, stride_h,
++              dilation_w, dilation_h, shape.w, shape.h, shape.c, out_shape.w, out_shape.h, out_shape.c,
++              num_input, num_output, maxk, opt.use_fp16_arithmetic ? 1 : 0, opt.use_fp16_storage ? 1 : 0,
++              opt.use_winograd23_convolution ? 1 : 0, opt.use_winograd43_convolution ? 1 : 0,
++              opt.use_sgemm_convolution ? 1 : 0);
+@@ -1740,6 +1748,15 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+     bool is_conv1x1s1d1 = kernel_w == 1 && kernel_h == 1 && stride_w == 1 && stride_h == 1 && dilation_w == 1 && dilation_h == 1;
+     bool is_conv3x3s1d1 = kernel_w == 3 && kernel_h == 3 && stride_w == 1 && stride_h == 1 && dilation_w == 1 && dilation_h == 1;
+ 
++    const auto log_dispatch = [this](const char* route, const char* stage, const Pipeline* pipeline, const VkMat& dispatcher)
++    {
++        NCNN_LOGE("[CONV_DISPATCH] layer=%s route=%s stage=%s dispatcher=%dx%dx%d local=%ux%ux%u groups=%llu",
++                  name.c_str(), route, stage, dispatcher.w, dispatcher.h, dispatcher.c,
++                  pipeline ? pipeline->local_size_x() : 0u,
++                  pipeline ? pipeline->local_size_y() : 0u,
++                  pipeline ? pipeline->local_size_z() : 0u,
++                  (unsigned long long)((pipeline && pipeline->local_size_x() && pipeline->local_size_y() && pipeline->local_size_z())
++                      ? ((unsigned long long)(dispatcher.w + (int)pipeline->local_size_x() - 1) / pipeline->local_size_x()) *
++                        ((unsigned long long)(dispatcher.h + (int)pipeline->local_size_y() - 1) / pipeline->local_size_y()) *
++                        ((unsigned long long)(dispatcher.c + (int)pipeline->local_size_z() - 1) / pipeline->local_size_z()) : 0ull));
++    };
++
+     if (opt.use_winograd_convolution && (opt.use_winograd23_convolution || opt.use_winograd43_convolution) && is_conv3x3s1d1 && num_input >= 16 && num_output >= 16)
+     {
+@@ -1754,6 +1771,8 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+                 pre_winograd43 = false;
+         }
+ 
++        NCNN_LOGE("[WINOGRAD_SELECT] layer=%s variant=%s input=%dx%d output=%dx%d cooperative_matrix=%d",
++                  name.c_str(), pre_winograd43 ? "F43" : "F23", w, h, outw, outh, use_cooperative_matrix ? 1 : 0);
++
+         if (pre_winograd43)
+         {
+@@ -1785,6 +1804,7 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+                 dispatcher.w = block_x;
+                 dispatcher.h = block_y;
+                 dispatcher.c = channels;
+ 
++                log_dispatch("winograd43", "transform_input", pipeline_convolution_3x3s1d1_winograd43_transform_input, dispatcher);
+                 cmd.record_pipeline(pipeline_convolution_3x3s1d1_winograd43_transform_input, bindings, constants, dispatcher);
+@@ -1830,6 +1850,7 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+                     dispatcher.w = (blocks_x * blocks_y) * (coopmat_subgroup_size * UNROLL_WG_M * UNROLL_WG_N);
+                     dispatcher.h = 1;
+                     dispatcher.c = 36;
+ 
++                    log_dispatch("winograd43", "gemm_coopmat", pipeline_convolution_3x3s1d1_winograd43_gemm, dispatcher);
+                     cmd.record_pipeline(pipeline_convolution_3x3s1d1_winograd43_gemm, bindings, constants, dispatcher);
+@@ -1850,6 +1871,7 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+                     dispatcher.w = (top_tm_blob.w + 3) / 4;
+                     dispatcher.h = num_output / out_elempack;
+                     dispatcher.c = 36;
+ 
++                    log_dispatch("winograd43", "gemm", pipeline_convolution_3x3s1d1_winograd43_gemm, dispatcher);
+                     cmd.record_pipeline(pipeline_convolution_3x3s1d1_winograd43_gemm, bindings, constants, dispatcher);
+@@ -1881,6 +1903,7 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+                 dispatcher.w = block_x;
+                 dispatcher.h = block_y;
+                 dispatcher.c = top_blob.c;
+ 
++                log_dispatch("winograd43", "transform_output", pipeline_convolution_3x3s1d1_winograd43_transform_output, dispatcher);
+                 cmd.record_pipeline(pipeline_convolution_3x3s1d1_winograd43_transform_output, bindings, constants, dispatcher);
+@@ -1914,6 +1937,7 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+                 dispatcher.w = block_x;
+                 dispatcher.h = block_y;
+                 dispatcher.c = channels;
+ 
++                log_dispatch("winograd23", "transform_input", pipeline_convolution_3x3s1d1_winograd23_transform_input, dispatcher);
+                 cmd.record_pipeline(pipeline_convolution_3x3s1d1_winograd23_transform_input, bindings, constants, dispatcher);
+@@ -1959,6 +1983,7 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+                     dispatcher.w = (blocks_x * blocks_y) * (coopmat_subgroup_size * UNROLL_WG_M * UNROLL_WG_N);
+                     dispatcher.h = 1;
+                     dispatcher.c = 16;
+ 
++                    log_dispatch("winograd23", "gemm_coopmat", pipeline_convolution_3x3s1d1_winograd23_gemm, dispatcher);
+                     cmd.record_pipeline(pipeline_convolution_3x3s1d1_winograd23_gemm, bindings, constants, dispatcher);
+@@ -1979,6 +2004,7 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+                     dispatcher.w = (top_tm_blob.w + 3) / 4;
+                     dispatcher.h = num_output / out_elempack;
+                     dispatcher.c = 16;
+ 
++                    log_dispatch("winograd23", "gemm", pipeline_convolution_3x3s1d1_winograd23_gemm, dispatcher);
+                     cmd.record_pipeline(pipeline_convolution_3x3s1d1_winograd23_gemm, bindings, constants, dispatcher);
+@@ -2010,6 +2036,7 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+                 dispatcher.w = block_x;
+                 dispatcher.h = block_y;
+                 dispatcher.c = top_blob.c;
+ 
++                log_dispatch("winograd23", "transform_output", pipeline_convolution_3x3s1d1_winograd23_transform_output, dispatcher);
+                 cmd.record_pipeline(pipeline_convolution_3x3s1d1_winograd23_transform_output, bindings, constants, dispatcher);
+@@ -2074,6 +2101,7 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+             dispatcher.w = (blocks_x * blocks_y) * (coopmat_subgroup_size * UNROLL_WG_M * UNROLL_WG_N);
+             dispatcher.h = 1;
+             dispatcher.c = 1;
+ 
++            log_dispatch("sgemm", "gemm_coopmat", pipeline_convolution_gemm, dispatcher);
+             cmd.record_pipeline(pipeline_convolution_gemm, bindings, constants, dispatcher);
+@@ -2106,6 +2134,7 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+             dispatcher.w = (top_blob.w * top_blob.h + 3) / 4;
+             dispatcher.h = num_output_packed / 4;
+             dispatcher.c = 1;
+ 
++            log_dispatch("sgemm", "gemm", pipeline_convolution_gemm, dispatcher);
+             cmd.record_pipeline(pipeline_convolution_gemm, bindings, constants, dispatcher);
+@@ -2143,6 +2172,7 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+             dispatcher.w = (blocks_x * blocks_y) * (coopmat_subgroup_size * UNROLL_WG_M * UNROLL_WG_N);
+             dispatcher.h = 1;
+             dispatcher.c = 1;
+ 
++            log_dispatch("pointwise_1x1s1d1", "gemm_coopmat", pipeline_convolution_1x1s1d1, dispatcher);
+             cmd.record_pipeline(pipeline_convolution_1x1s1d1, bindings, constants, dispatcher);
+@@ -2177,6 +2207,7 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+             dispatcher.w = size;
+             dispatcher.h = outc_pack4;
+             dispatcher.c = 1;
+ 
++            log_dispatch("pointwise_1x1s1d1", "pointwise", pipeline_convolution_1x1s1d1, dispatcher);
+             cmd.record_pipeline(pipeline_convolution_1x1s1d1, bindings, constants, dispatcher);
+@@ -2219,6 +2250,7 @@ int Convolution_vulkan::forward(const VkMat& bottom_blob, VkMat& top_blob, VkCompute& cmd, const Option& opt) const
+     dispatcher.w = (top_blob.w + 1) / 2;
+     dispatcher.h = (top_blob.h + 1) / 2;
+     dispatcher.c = (outc_pack4 + 1) / 2;
+ 
++    log_dispatch("direct_generic", "convolution", pipeline_convolution, dispatcher);
+     cmd.record_pipeline(pipeline_convolution, bindings, constants, dispatcher);
