@@ -20,6 +20,34 @@ NDK_ROOT="$(cd "${NDK_ROOT}" && pwd)"
 
 ABI="${ANDROID_ABI:-arm64-v8a}"
 API="${ANDROID_API:-29}"
+
+# Optional fixed local size for the packed generic Direct Convolution pipeline.
+# Set all three variables or leave all three unset to preserve NCNN defaults.
+DIRECT_X="${NCNN_CONV_DIRECT_LOCAL_SIZE_X:-}"
+DIRECT_Y="${NCNN_CONV_DIRECT_LOCAL_SIZE_Y:-}"
+DIRECT_Z="${NCNN_CONV_DIRECT_LOCAL_SIZE_Z:-}"
+DIRECT_LOCAL_SIZE_CMAKE_ARGS=()
+DIRECT_SET_COUNT=0
+for value in "${DIRECT_X}" "${DIRECT_Y}" "${DIRECT_Z}"; do
+    [[ -n "${value}" ]] && DIRECT_SET_COUNT=$((DIRECT_SET_COUNT + 1))
+done
+if [[ "${DIRECT_SET_COUNT}" -ne 0 && "${DIRECT_SET_COUNT}" -ne 3 ]]; then
+    echo "ERROR: set all of NCNN_CONV_DIRECT_LOCAL_SIZE_X/Y/Z, or none of them." >&2
+    exit 2
+fi
+if [[ "${DIRECT_SET_COUNT}" -eq 3 ]]; then
+    for value in "${DIRECT_X}" "${DIRECT_Y}" "${DIRECT_Z}"; do
+        if [[ ! "${value}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "ERROR: Direct Conv local-size dimensions must be positive integers." >&2
+            exit 2
+        fi
+    done
+    DIRECT_LOCAL_SIZE_CXX_FLAGS="-DNCNN_CONV_DIRECT_LOCAL_SIZE_X=${DIRECT_X} -DNCNN_CONV_DIRECT_LOCAL_SIZE_Y=${DIRECT_Y} -DNCNN_CONV_DIRECT_LOCAL_SIZE_Z=${DIRECT_Z}"
+    DIRECT_LOCAL_SIZE_CMAKE_ARGS+=("-DCMAKE_CXX_FLAGS=${DIRECT_LOCAL_SIZE_CXX_FLAGS}")
+    echo "DIRECT_CONV_LOCAL_SIZE_REQUESTED=${DIRECT_X}x${DIRECT_Y}x${DIRECT_Z}"
+else
+    echo "DIRECT_CONV_LOCAL_SIZE_REQUESTED=NCNN_OPTIMAL_DEFAULT"
+fi
 SOURCE_DIR="${REPO_ROOT}/.deps/ncnn-${EXPECTED_SHA}"
 BUILD_DIR="${REPO_ROOT}/.build/ncnn-${ABI}-${EXPECTED_SHA}"
 INSTALL_PREFIX="${REPO_ROOT}/app/src/main/cpp/ncnn-android-vulkan/${ABI}"
@@ -72,8 +100,9 @@ PATCH_SYNC="${PATCH_DIR}/runtime_sync_timing.patch"
 PATCH_ASYNC="${PATCH_DIR}/async_vk_submit.patch"
 PATCH_ROUTE="${PATCH_DIR}/convolution_route_test.patch"
 PATCH_DISPATCH="${PATCH_DIR}/convolution_dispatch_diagnostics.patch"
+PATCH_DIRECT_LOCAL_SIZE="${PATCH_DIR}/direct_conv_local_size_override.patch"
 
-for patch_file in "${PATCH_HEADER}" "${PATCH_SOURCE}" "${PATCH_SHADER}" "${PATCH_BENCHMARK}" "${PATCH_BENCHMARK_RUNTIME}" "${PATCH_SYNC}" "${PATCH_ASYNC}" "${PATCH_ROUTE}" "${PATCH_DISPATCH}"; do
+for patch_file in "${PATCH_HEADER}" "${PATCH_SOURCE}" "${PATCH_SHADER}" "${PATCH_BENCHMARK}" "${PATCH_BENCHMARK_RUNTIME}" "${PATCH_SYNC}" "${PATCH_ASYNC}" "${PATCH_ROUTE}" "${PATCH_DISPATCH}" "${PATCH_DIRECT_LOCAL_SIZE}"; do
     if [[ ! -s "${patch_file}" ]]; then
         echo "ERROR: required MatMul Vulkan patch file is missing or empty: ${patch_file}" >&2
         exit 4
@@ -113,8 +142,14 @@ if ! git -C "${SOURCE_DIR}" apply --check "${PATCH_DISPATCH}"; then
     exit 4
 fi
 git -C "${SOURCE_DIR}" apply "${PATCH_DISPATCH}"
+echo "[NCNN_PATCH] applying opt-in Direct Convolution local-size override"
+if ! git -C "${SOURCE_DIR}" apply --check "${PATCH_DIRECT_LOCAL_SIZE}"; then
+    echo "ERROR: Direct Convolution local-size patch does not match the post-diagnostics pinned NCNN source." >&2
+    exit 4
+fi
+git -C "${SOURCE_DIR}" apply "${PATCH_DIRECT_LOCAL_SIZE}"
 
-PATCHSET_SHA="$(cat "${PATCH_HEADER}" "${PATCH_SOURCE}" "${PATCH_SHADER}" "${PATCH_BENCHMARK}" "${PATCH_BENCHMARK_RUNTIME}" "${PATCH_SYNC}" "${PATCH_ASYNC}" "${PATCH_ROUTE}" "${PATCH_DISPATCH}" | sha256sum | awk '{print $1}')"
+PATCHSET_SHA="$(cat "${PATCH_HEADER}" "${PATCH_SOURCE}" "${PATCH_SHADER}" "${PATCH_BENCHMARK}" "${PATCH_BENCHMARK_RUNTIME}" "${PATCH_SYNC}" "${PATCH_ASYNC}" "${PATCH_ROUTE}" "${PATCH_DISPATCH}" "${PATCH_DIRECT_LOCAL_SIZE}" | sha256sum | awk '{print $1}')"
 if [[ ! "${PATCHSET_SHA}" =~ ^[0-9a-f]{64}$ ]]; then
     echo "ERROR: failed to calculate NCNN patchset SHA." >&2
     exit 4
@@ -124,6 +159,7 @@ echo "NCNN_SOURCE=${SOURCE_DIR}"
 echo "NCNN_SOURCE_SHA=${ACTUAL_SHA}"
 echo "NCNN_SOURCE_STATUS=PINNED_BASE_WITH_LOCAL_PATCHSET"
 echo "NCNN_PATCHES=MATMUL_VULKAN_FP32_ACCUMULATE+BENCHMARK_TIMESTAMP_SAFETY+RUNTIME_BENCHMARK_GATING+RUNTIME_SYNC_TIMING+ASYNC_VK_SUBMIT+PER_LAYER_DIRECT_ROUTE_DIAGNOSTIC+PER_LAYER_DISPATCH_DIAGNOSTICS"
+echo "NCNN_DIRECT_CONV_LOCAL_SIZE=${DIRECT_X:-optimal}x${DIRECT_Y:-optimal}x${DIRECT_Z:-optimal}"
 echo "NCNN_PATCHSET_SHA=${PATCHSET_SHA}"
 
 # Remove previous generated outputs so no old library can survive the reset.
@@ -144,7 +180,8 @@ cmake -S "${SOURCE_DIR}" -B "${BUILD_DIR}" \
     -DNCNN_BUILD_TESTS=OFF \
     -DNCNN_BUILD_TOOLS=OFF \
     -DNCNN_BUILD_EXAMPLES=OFF \
-    -DNCNN_INSTALL_SDK=ON
+    -DNCNN_INSTALL_SDK=ON \\
+    "${DIRECT_LOCAL_SIZE_CMAKE_ARGS[@]}"
 
 cmake --build "${BUILD_DIR}" --parallel 5
 cmake --install "${BUILD_DIR}"
