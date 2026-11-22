@@ -1,0 +1,18 @@
+diff --git a/src/layer/vulkan/convolution_vulkan.cpp b/src/layer/vulkan/convolution_vulkan.cpp
+--- a/src/layer/vulkan/convolution_vulkan.cpp
++++ b/src/layer/vulkan/convolution_vulkan.cpp
+@@ -1473,7 +1473,14 @@
+         }
+ 
+         pipeline_convolution = new Pipeline(vkdev);
++#if defined(NCNN_CONV_DIRECT_LOCAL_SIZE_X) && defined(NCNN_CONV_DIRECT_LOCAL_SIZE_Y) && defined(NCNN_CONV_DIRECT_LOCAL_SIZE_Z)
++        // Experimental fixed workgroup dimensions for the packed direct-convolution shader.
++        // The shader indexes only gl_GlobalInvocationID and has explicit output bounds checks.
++        // 0 is not a valid dimension; keep all three compile definitions positive.
++        pipeline_convolution->set_local_size_xyz(NCNN_CONV_DIRECT_LOCAL_SIZE_X, NCNN_CONV_DIRECT_LOCAL_SIZE_Y, NCNN_CONV_DIRECT_LOCAL_SIZE_Z);
++#else
+         pipeline_convolution->set_optimal_local_size_xyz(local_size_xyz);
++#endif
+         pipeline_convolution->create(LayerShaderType::convolution_packed, opt, specializations);
+     }
+ 
