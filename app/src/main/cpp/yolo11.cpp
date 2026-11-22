@@ -61,6 +61,35 @@ static std::vector<int> fp32_layers_property()
     }
     return indices;
 }
+static std::vector<int> direct_layers_property()
+{
+    char value[PROP_VALUE_MAX] = {};
+    if (__system_property_get("debug.yolo11.direct_layers", value) <= 0 || value[0] == '\0')
+        return {};
+
+    std::vector<int> indices;
+    for (char* token = std::strtok(value, ",");
+         token != nullptr;
+         token = std::strtok(nullptr, ","))
+    {
+        char* end = nullptr;
+        const long parsed = std::strtol(token, &end, 10);
+        while (end && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n'))
+            ++end;
+
+        if (end == token || (end && *end != '\0') || parsed < 0 ||
+            parsed > std::numeric_limits<int>::max())
+        {
+            LOGW("DIRECT_LAYER_CONFIG invalid_token='%s' property_ignored_for_token=1", token);
+            continue;
+        }
+
+        const int index = static_cast<int>(parsed);
+        if (std::find(indices.begin(), indices.end(), index) == indices.end())
+            indices.push_back(index);
+    }
+    return indices;
+}
 static int layer_benchmark_property(){char v[PROP_VALUE_MAX]={};return __system_property_get("debug.yolo11.layer_benchmark",v)>0?std::atoi(v):0;}
 static float half_to_float(uint16_t h){
  const uint32_t sign=(uint32_t)(h&0x8000u)<<16;uint32_t exp=(h>>10)&31u,m=h&1023u,bits=0;
@@ -549,6 +578,47 @@ int Yolo11::load(AAssetManager* mgr, const char* modeltype, int model_input_size
                 LOGI("FP32_LAYER_CONFIG idx=%d type=%s name=%s featmask=0x%x arithmetic=%s",
                      index, layer->type.c_str(), layer->name.c_str(), layer->featmask,
                      fp16_arithmetic_effective ? "FP16" : "FP32");
+            }
+        }
+    }
+
+    // Select the generic Direct convolution path per layer before Vulkan pipelines are created.
+    // featmask bits 5 and 6 inhibit SGEMM and Winograd; FP16/FP32 arithmetic remains independent.
+    const std::vector<int> direct_layer_indices = direct_layers_property();
+    if (!direct_layer_indices.empty())
+    {
+        if (!use_vulkan_compute)
+        {
+            LOGW("DIRECT_LAYER_CONFIG ignored: Vulkan compute is disabled");
+        }
+        else
+        {
+            const auto& layers = net.layers();
+            for (int index : direct_layer_indices)
+            {
+                if (index < 0 || static_cast<size_t>(index) >= layers.size())
+                {
+                    LOGW("DIRECT_LAYER_CONFIG idx=%d status=OUT_OF_RANGE layer_count=%zu",
+                         index, layers.size());
+                    continue;
+                }
+
+                ncnn::Layer* layer = layers[static_cast<size_t>(index)];
+                if (!layer)
+                {
+                    LOGW("DIRECT_LAYER_CONFIG idx=%d status=NULL_LAYER", index);
+                    continue;
+                }
+                if (layer->type != "Convolution")
+                {
+                    LOGW("DIRECT_LAYER_CONFIG idx=%d type=%s name=%s status=NOT_CONVOLUTION",
+                         index, layer->type.c_str(), layer->name.c_str());
+                    continue;
+                }
+
+                layer->featmask |= (1 << 5) | (1 << 6);
+                LOGI("DIRECT_LAYER_CONFIG idx=%d type=%s name=%s featmask=0x%x sgemm=OFF winograd=OFF",
+                     index, layer->type.c_str(), layer->name.c_str(), layer->featmask);
             }
         }
     }
