@@ -12,7 +12,9 @@ diff --git a/src/gpu.cpp b/src/gpu.cpp
 +#endif
  
  #include "glslang/SPIRV/GlslangToSpv.h"
-@@ -4283,6 +4287,94 @@ bool VulkanDevice::is_valid() const
+@@ -4282,6 +4286,94 @@
+ bool VulkanDevice::is_valid() const
+ {
      return d->valid;
  }
  
