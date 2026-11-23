@@ -1,0 +1,119 @@
+diff --git a/src/gpu.cpp b/src/gpu.cpp
+--- a/src/gpu.cpp
++++ b/src/gpu.cpp
+@@ -8,6 +8,10 @@
+ #include <float.h>
+ #include <limits.h>
++#include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#if defined(__ANDROID__)
++#include <sys/system_properties.h>
++#endif
+ 
+ #include "glslang/SPIRV/GlslangToSpv.h"
+@@ -4283,6 +4287,94 @@ bool VulkanDevice::is_valid() const
+     return d->valid;
+ }
+ 
++// Opt-in SPIR-V capture at the final Vulkan module boundary. This sees both
++// cache-hit and cache-miss paths, after inject_local_size_xyz() has run.
++// Enable with NCNN_SPIRV_DUMP_DIR, or on Android with the system property
++// debug.ncnn.spirv_dump_dir. The target directory must already exist.
++static void dump_spirv_before_vk_create(const uint32_t* spv_data, size_t spv_data_size)
++{
++    const char* dump_dir = getenv("NCNN_SPIRV_DUMP_DIR");
++#if defined(__ANDROID__)
++    char property_value[PROP_VALUE_MAX] = {0};
++    if (!dump_dir || !dump_dir[0])
++    {
++        if (__system_property_get("debug.ncnn.spirv_dump_dir", property_value) > 0)
++            dump_dir = property_value;
++    }
++#endif
++    if (!dump_dir || !dump_dir[0] || !spv_data || spv_data_size < 20 || (spv_data_size & 3))
++        return;
++
++    static unsigned long long dump_sequence = 0;
++    const unsigned long long sequence = __sync_fetch_and_add(&dump_sequence, 1);
++
++    unsigned long long hash = 14695981039346656037ull;
++    const unsigned char* bytes = (const unsigned char*)spv_data;
++    for (size_t i = 0; i < spv_data_size; i++)
++    {
++        hash ^= bytes[i];
++        hash *= 1099511628211ull;
++    }
++
++    uint32_t local_size_x = 0;
++    uint32_t local_size_y = 0;
++    uint32_t local_size_z = 0;
++    const size_t word_count = spv_data_size / sizeof(uint32_t);
++    for (size_t i = 5; i < word_count;)
++    {
++        const uint32_t instruction = spv_data[i];
++        const uint32_t word_count_instruction = instruction >> 16;
++        const uint32_t opcode = instruction & 0xffff;
++        if (word_count_instruction == 0 || i + word_count_instruction > word_count)
++            break;
++        // OpExecutionMode = 16, LocalSize = 17.
++        if (opcode == 16 && word_count_instruction >= 6 && spv_data[i + 2] == 17)
++        {
++            local_size_x = spv_data[i + 3];
++            local_size_y = spv_data[i + 4];
++            local_size_z = spv_data[i + 5];
++            break;
++        }
++        i += word_count_instruction;
++    }
++
++    char path[4096];
++    const int path_length = snprintf(path, sizeof(path),
++                                     "%s/ncnn_spv_%06llu_%016llx.spv",
++                                     dump_dir, sequence, hash);
++    if (path_length <= 0 || (size_t)path_length >= sizeof(path))
++    {
++        NCNN_LOGE("[SPIRV_DUMP] invalid output path");
++        return;
++    }
++
++    FILE* fp = fopen(path, "wb");
++    if (!fp)
++    {
++        NCNN_LOGE("[SPIRV_DUMP] cannot open %s", path);
++        return;
++    }
++    const size_t written = fwrite(spv_data, 1, spv_data_size, fp);
++    const int close_result = fclose(fp);
++    if (written != spv_data_size || close_result != 0)
++    {
++        NCNN_LOGE("[SPIRV_DUMP] incomplete write %s (%lu/%lu bytes)",
++                  path, (unsigned long)written, (unsigned long)spv_data_size);
++        return;
++    }
++
++    char metadata_path[4096];
++    const int metadata_length = snprintf(metadata_path, sizeof(metadata_path), "%s.txt", path);
++    if (metadata_length > 0 && (size_t)metadata_length < sizeof(metadata_path))
++    {
++        FILE* metadata = fopen(metadata_path, "w");
++        if (metadata)
++        {
++            fprintf(metadata,
++                    "sequence=%llu\nbytes=%lu\nfnv1a64=%016llx\nlocal_size=%u,%u,%u\n",
++                    sequence, (unsigned long)spv_data_size, hash,
++                    local_size_x, local_size_y, local_size_z);
++            fclose(metadata);
++        }
++    }
++
++    NCNN_LOGE("[SPIRV_DUMP] sequence=%llu bytes=%lu hash=%016llx local_size=%ux%ux%u path=%s",
++              sequence, (unsigned long)spv_data_size, hash,
++              local_size_x, local_size_y, local_size_z, path);
++}
++
+ VkShaderModule VulkanDevice::compile_shader_module(const uint32_t* spv_data, size_t spv_data_size) const
+ {
++    dump_spirv_before_vk_create(spv_data, spv_data_size);
++
+     VkShaderModuleCreateInfo shaderModuleCreateInfo;
