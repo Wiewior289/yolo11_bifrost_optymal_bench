@@ -1,7 +1,7 @@
 diff --git a/src/gpu.cpp b/src/gpu.cpp
 --- a/src/gpu.cpp
 +++ b/src/gpu.cpp
-@@ -4287,3 +4287,12 @@
+@@ -4295,3 +4295,12 @@
 -static void dump_spirv_before_vk_create(const uint32_t* spv_data, size_t spv_data_size)
 +static void dump_spirv_before_vk_create(const uint32_t* spv_data, size_t spv_data_size,
 +                                        unsigned long long* sequence_out,
@@ -15,7 +15,7 @@ diff --git a/src/gpu.cpp b/src/gpu.cpp
 +        *captured_out = false;
 +
      const char* dump_dir = getenv("NCNN_SPIRV_DUMP_DIR");
-@@ -4355,8 +4364,15 @@
+@@ -4360,8 +4369,15 @@
      if (written != spv_data_size || close_result != 0)
      {
          NCNN_LOGE("[SPIRV_DUMP] incomplete write %s (%lu/%lu bytes)",
@@ -31,7 +31,7 @@ diff --git a/src/gpu.cpp b/src/gpu.cpp
 +        *captured_out = true;
  
      char metadata_path[4096];
-@@ -4372,10 +4389,181 @@
+@@ -4372,10 +4388,181 @@
      NCNN_LOGE("[SPIRV_DUMP] sequence=%llu bytes=%lu hash=%016llx local_size=%ux%ux%u path=%s",
                sequence, (unsigned long)spv_data_size, hash,
                local_size_x, local_size_y, local_size_z, path);
@@ -214,7 +214,7 @@ diff --git a/src/gpu.cpp b/src/gpu.cpp
 +    dump_spirv_before_vk_create(spv_data, spv_data_size, &dump_sequence, &dump_hash, &dump_captured);
  
      VkShaderModuleCreateInfo shaderModuleCreateInfo;
-@@ -4385,8 +4556,11 @@
+@@ -4385,8 +4572,11 @@
      if (ret != VK_SUCCESS)
      {
          NCNN_LOGE("vkCreateShaderModule failed %d", ret);
@@ -226,7 +226,7 @@ diff --git a/src/gpu.cpp b/src/gpu.cpp
 +
      return shader_module;
  }
-@@ -4678,6 +4852,8 @@
+@@ -4678,6 +4868,8 @@
      computePipelineCreateInfo.layout = pipeline_layout;
      computePipelineCreateInfo.basePipelineHandle = 0;
      computePipelineCreateInfo.basePipelineIndex = 0;
