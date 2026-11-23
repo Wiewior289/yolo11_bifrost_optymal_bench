@@ -15,6 +15,51 @@ two-argument overload. Therefore the captured bytes include the final injected
 `LocalSize` values. PipelineCache hits and misses converge on this module-creation path;
 the independent `Pipeline::create()` path also reaches it.
 
+## Specialization capture point
+
+NCNN does not pass `VkSpecializationInfo` from `VkCompute::record_pipeline()`.
+That method records descriptor bindings, push constants and dispatch work after a
+pipeline already exists.
+
+Specialization values are created earlier by a layer or pipeline creator and flow
+through this path:
+
+```text
+Layer / Pipeline::create()
+  -> PipelineCache::get_pipeline()
+  -> PipelineCache::new_pipeline()
+  -> VulkanDevice::create_pipeline()
+  -> vkCreateComputePipelines()
+```
+
+The AHardwareBuffer import pipeline also calls
+`VulkanDevice::create_pipeline()` directly. The hook is placed in that shared
+`gpu.cpp` function immediately before `vkCreateComputePipelines()`, after NCNN has
+constructed the final `VkSpecializationMapEntry[]` and `VkSpecializationInfo`.
+
+In the pinned NCNN revision, each NCNN specialization is mapped as follows:
+
+- `constantID = i`
+- `offset = i * sizeof(vk_specialization_type)`
+- `size = sizeof(vk_specialization_type)`
+
+`vk_specialization_type` is a 4-byte union containing `int`, `float` and
+`uint32_t`. The dump stores every map entry (constant ID, offset and size), the
+mapped value bytes, and the complete `VkSpecializationInfo::pData` byte array.
+For 4-byte values it also prints unsigned, signed and float interpretations.
+Those interpretations are diagnostic only: the capture does not infer the declared
+SPIR-V scalar type or a semantic parameter name.
+
+The specialization record includes the originating SPIR-V capture sequence and
+FNV-1a64 hash, resolved through the `VkShaderModule` handle. This makes it possible
+to join a specialization record to the exact captured module without relying on
+log timing. `module_found=1` is expected for modules captured by this hook.
+
+The NCNN in-memory pipeline-cache hit path returns an existing pipeline without
+calling `VulkanDevice::create_pipeline()`; it therefore does not create a new
+specialization record. Each actual `vkCreateComputePipelines()` call is recorded,
+including calls that may be served quickly by the Vulkan driver's pipeline cache.
+
 The hook records every module that reaches this point, not just YOLO convolution shaders.
 This is intentional for an initial inventory. The low-level API does not carry the NCNN
 shader registry index/name, so files are identified by capture sequence and FNV-1a 64-bit
@@ -57,6 +102,7 @@ in the process environment before NCNN creates its Vulkan pipelines.
 
 - `ncnn_spv_000000_<fnv1a64>.spv`: exact bytes passed to `vkCreateShaderModule`.
 - `ncnn_spv_000000_<fnv1a64>.spv.txt`: sequence, byte count, FNV-1a64 and LocalSize.
+- `ncnn_spec_<module-sequence>_<module-fnv1a64>_<pipeline-sequence>.txt`: exact specialization map entries and backing data bytes passed for the associated module.
 
 The sequence starts at zero for each process. Use a fresh/empty directory for each run
 to avoid confusing captures from separate process launches.
@@ -74,6 +120,8 @@ patchset. The upstream source SHA remains the value in `ncnn.commit`.
   during shader-module creation and can lengthen model/pipeline initialization.
 - Do not use a capture run for FPS, latency, power or thermal benchmarking.
 - The low-level dump does not currently encode a semantic shader name or layer index.
+- Specialization capture records the Vulkan map and raw data, but does not infer each SpecId's source-level meaning or scalar type. Inspect the matching SPIR-V disassembly when converting values into MOC `-S` arguments.
+- The specialization hook adds file I/O immediately before pipeline creation. Do not use a capture run for timing or FPS measurements.
 - The LocalSize parser records literal `OpExecutionMode LocalSize`; modules using
   `OpExecutionModeId` may report `0,0,0`.
 - The SPIR-V is the module supplied to Vulkan, not the proprietary machine code emitted
