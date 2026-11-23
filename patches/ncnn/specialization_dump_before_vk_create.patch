@@ -1,0 +1,236 @@
+diff --git a/src/gpu.cpp b/src/gpu.cpp
+--- a/src/gpu.cpp
++++ b/src/gpu.cpp
+@@
+-static void dump_spirv_before_vk_create(const uint32_t* spv_data, size_t spv_data_size)
++static void dump_spirv_before_vk_create(const uint32_t* spv_data, size_t spv_data_size,
++                                        unsigned long long* sequence_out,
++                                        unsigned long long* hash_out, bool* captured_out)
+ {
++    if (sequence_out)
++        *sequence_out = 0;
++    if (hash_out)
++        *hash_out = 0;
++    if (captured_out)
++        *captured_out = false;
++
+     const char* dump_dir = getenv("NCNN_SPIRV_DUMP_DIR");
+@@
+     if (written != spv_data_size || close_result != 0)
+     {
+         NCNN_LOGE("[SPIRV_DUMP] incomplete write %s (%lu/%lu bytes)",
+                   path, (unsigned long)written, (unsigned long)spv_data_size);
+         return;
+     }
++
++    if (sequence_out)
++        *sequence_out = sequence;
++    if (hash_out)
++        *hash_out = hash;
++    if (captured_out)
++        *captured_out = true;
+ 
+     char metadata_path[4096];
+@@
+     NCNN_LOGE("[SPIRV_DUMP] sequence=%llu bytes=%lu hash=%016llx local_size=%ux%ux%u path=%s",
+               sequence, (unsigned long)spv_data_size, hash,
+               local_size_x, local_size_y, local_size_z, path);
+ }
+ 
++// Keep the captured SPIR-V identity associated with the VkShaderModule handle.
++// Specialization data is supplied later, at vkCreateComputePipelines().
++struct ncnn_spirv_dump_module_record
++{
++    VkShaderModule shader_module;
++    unsigned long long sequence;
++    unsigned long long hash;
++};
++
++static Mutex g_spirv_dump_module_lock;
++static std::vector<ncnn_spirv_dump_module_record> g_spirv_dump_modules;
++static unsigned long long g_spirv_specialization_sequence = 0;
++
++static void register_spirv_dump_module(VkShaderModule shader_module,
++                                       unsigned long long sequence,
++                                       unsigned long long hash)
++{
++    ncnn_spirv_dump_module_record record;
++    record.shader_module = shader_module;
++    record.sequence = sequence;
++    record.hash = hash;
++
++    MutexLockGuard lock(g_spirv_dump_module_lock);
++    g_spirv_dump_modules.push_back(record);
++
++    // Keep memory bounded during long-running diagnostic sessions.
++    if (g_spirv_dump_modules.size() > 4096)
++        g_spirv_dump_modules.erase(g_spirv_dump_modules.begin(), g_spirv_dump_modules.begin() + 2048);
++}
++
++static bool find_spirv_dump_module(VkShaderModule shader_module,
++                                   unsigned long long* sequence,
++                                   unsigned long long* hash)
++{
++    MutexLockGuard lock(g_spirv_dump_module_lock);
++    for (size_t i = g_spirv_dump_modules.size(); i > 0; i--)
++    {
++        const ncnn_spirv_dump_module_record& record = g_spirv_dump_modules[i - 1];
++        if (record.shader_module != shader_module)
++            continue;
++
++        if (sequence)
++            *sequence = record.sequence;
++        if (hash)
++            *hash = record.hash;
++        return true;
++    }
++    return false;
++}
++
++// Dump the exact VkSpecializationInfo passed to vkCreateComputePipelines().
++// Values are emitted as raw bytes plus 32-bit integer/float interpretations;
++// the latter are diagnostic views, not inferred SPIR-V types.
++static void dump_specialization_info(VkShaderModule shader_module,
++                                     const VkSpecializationInfo* specialization_info,
++                                     uint32_t subgroup_size)
++{
++    const char* dump_dir = getenv("NCNN_SPIRV_DUMP_DIR");
++#if defined(__ANDROID__)
++    char property_value[PROP_VALUE_MAX] = {0};
++    if (!dump_dir || !dump_dir[0])
++    {
++        if (__system_property_get("debug.ncnn.spirv_dump_dir", property_value) > 0)
++            dump_dir = property_value;
++    }
++#endif
++    if (!dump_dir || !dump_dir[0] || !specialization_info)
++        return;
++
++    unsigned long long module_sequence = 0;
++    unsigned long long module_hash = 0;
++    const bool module_found = find_spirv_dump_module(shader_module, &module_sequence, &module_hash);
++    const unsigned long long pipeline_sequence = __sync_fetch_and_add(&g_spirv_specialization_sequence, 1);
++
++    unsigned long long shader_module_bits = 0;
++    const size_t handle_size = sizeof(shader_module) < sizeof(shader_module_bits) ? sizeof(shader_module) : sizeof(shader_module_bits);
++    memcpy(&shader_module_bits, &shader_module, handle_size);
++
++    char path[4096];
++    const int path_length = snprintf(path, sizeof(path),
++                                     "%s/ncnn_spec_%06llu_%016llx_%06llu.txt",
++                                     dump_dir, module_sequence, module_hash, pipeline_sequence);
++    if (path_length <= 0 || (size_t)path_length >= sizeof(path))
++    {
++        NCNN_LOGE("[SPEC_DUMP] invalid output path");
++        return;
++    }
++
++    FILE* fp = fopen(path, "w");
++    if (!fp)
++    {
++        NCNN_LOGE("[SPEC_DUMP] cannot open %s", path);
++        return;
++    }
++
++    fprintf(fp, "format=NCNN_VK_SPECIALIZATION_DUMP_V1\n");
++    fprintf(fp, "module_found=%d\n", module_found ? 1 : 0);
++    fprintf(fp, "module_sequence=%llu\n", module_sequence);
++    fprintf(fp, "module_fnv1a64=%016llx\n", module_hash);
++    fprintf(fp, "pipeline_sequence=%llu\n", pipeline_sequence);
++    fprintf(fp, "shader_module_bits=%016llx\n", shader_module_bits);
++    fprintf(fp, "stage=compute\nentry_point=main\n");
++    fprintf(fp, "subgroup_size=%u\n", subgroup_size);
++    fprintf(fp, "map_entry_count=%u\n", (unsigned int)specialization_info->mapEntryCount);
++    fprintf(fp, "data_size=%lu\n", (unsigned long)specialization_info->dataSize);
++
++    if (specialization_info->mapEntryCount && !specialization_info->pMapEntries)
++        fprintf(fp, "map_entries_valid=0\n");
++    else
++        fprintf(fp, "map_entries_valid=1\n");
++
++    for (uint32_t i = 0; i < specialization_info->mapEntryCount && specialization_info->pMapEntries; i++)
++    {
++        const VkSpecializationMapEntry& entry = specialization_info->pMapEntries[i];
++        const bool value_valid = specialization_info->pData
++                                 && entry.offset <= specialization_info->dataSize
++                                 && entry.size <= specialization_info->dataSize - entry.offset;
++
++        fprintf(fp, "map_entry[%u].constant_id=%u\n", i, entry.constantID);
++        fprintf(fp, "map_entry[%u].offset=%u\n", i, entry.offset);
++        fprintf(fp, "map_entry[%u].size=%lu\n", i, (unsigned long)entry.size);
++        fprintf(fp, "map_entry[%u].value_valid=%d\n", i, value_valid ? 1 : 0);
++
++        if (!value_valid)
++            continue;
++
++        const unsigned char* value = (const unsigned char*)specialization_info->pData + entry.offset;
++        fprintf(fp, "map_entry[%u].value_hex=", i);
++        for (size_t j = 0; j < entry.size; j++)
++            fprintf(fp, "%02x", (unsigned int)value[j]);
++        fprintf(fp, "\n");
++
++        if (entry.size == sizeof(uint32_t))
++        {
++            uint32_t raw_u32 = 0;
++            int raw_i32 = 0;
++            float raw_f32 = 0.f;
++            memcpy(&raw_u32, value, sizeof(raw_u32));
++            memcpy(&raw_i32, value, sizeof(raw_i32));
++            memcpy(&raw_f32, value, sizeof(raw_f32));
++            fprintf(fp, "map_entry[%u].value_u32=%u\n", i, raw_u32);
++            fprintf(fp, "map_entry[%u].value_i32=%d\n", i, raw_i32);
++            fprintf(fp, "map_entry[%u].value_f32=% .9g\n", i, raw_f32);
++        }
++    }
++
++    if (specialization_info->dataSize && specialization_info->pData)
++    {
++        const unsigned char* data = (const unsigned char*)specialization_info->pData;
++        fprintf(fp, "data_hex=");
++        for (size_t i = 0; i < specialization_info->dataSize; i++)
++            fprintf(fp, "%02x", (unsigned int)data[i]);
++        fprintf(fp, "\n");
++    }
++    else if (specialization_info->dataSize)
++    {
++        fprintf(fp, "data_valid=0\n");
++    }
++
++    if (fclose(fp) != 0)
++        NCNN_LOGE("[SPEC_DUMP] failed to close %s", path);
++    else
++        NCNN_LOGE("[SPEC_DUMP] module_sequence=%llu module_hash=%016llx entries=%u data_bytes=%lu path=%s",
++                  module_sequence, module_hash,
++                  (unsigned int)specialization_info->mapEntryCount,
++                  (unsigned long)specialization_info->dataSize, path);
++}
++
+ VkShaderModule VulkanDevice::compile_shader_module(const uint32_t* spv_data, size_t spv_data_size) const
+ {
+-    dump_spirv_before_vk_create(spv_data, spv_data_size);
++    unsigned long long dump_sequence = 0;
++    unsigned long long dump_hash = 0;
++    bool dump_captured = false;
++    dump_spirv_before_vk_create(spv_data, spv_data_size, &dump_sequence, &dump_hash, &dump_captured);
+ 
+     VkShaderModuleCreateInfo shaderModuleCreateInfo;
+@@
+     if (ret != VK_SUCCESS)
+     {
+         NCNN_LOGE("vkCreateShaderModule failed %d", ret);
+         return 0;
+     }
+ 
++    if (dump_captured)
++        register_spirv_dump_module(shader_module, dump_sequence, dump_hash);
++
+     return shader_module;
+ }
+@@
+     computePipelineCreateInfo.layout = pipeline_layout;
+     computePipelineCreateInfo.basePipelineHandle = 0;
+     computePipelineCreateInfo.basePipelineIndex = 0;
+ 
++    dump_specialization_info(shader_module, &specializationInfo, subgroup_size);
++
+     VkResult ret = vkCreateComputePipelines(d->device, pipeline_cache, 1, &computePipelineCreateInfo, 0, pipeline);
