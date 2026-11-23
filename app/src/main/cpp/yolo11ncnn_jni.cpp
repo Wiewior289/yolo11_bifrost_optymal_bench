@@ -8,6 +8,7 @@
 #include <android/hardware_buffer.h>
 #include <android/hardware_buffer_jni.h>
 #include <android/log.h>
+#include <android/trace.h>
 #include <mutex>
 #include <atomic>
 #include <memory>
@@ -135,10 +136,14 @@ Java_com_tencent_yolo11ncnn_Yolo11Ncnn_DetectFrame(
     if (objects.capacity() < 64) objects.reserve(64);
 
     const auto detect_start = std::chrono::steady_clock::now();
+    char trace_name[64];
+    std::snprintf(trace_name, sizeof(trace_name), "YOLO_JNI_DETECT_%lld", (long long)frame_id);
+    ATrace_beginSection(trace_name);
     const int ret = engine->detect_frame(ahb, conf_thresh, nms_thresh, objects,
         rotate_type, static_cast<int64_t>(frame_id), static_cast<int64_t>(image_timestamp_ns));
     const double detect_frame_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - detect_start).count();
+    ATrace_endSection();
     AHardwareBuffer_release(ahb);
 
     if (ret != 0) {
