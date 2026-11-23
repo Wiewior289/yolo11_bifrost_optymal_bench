@@ -226,7 +226,7 @@ diff --git a/src/gpu.cpp b/src/gpu.cpp
 +
      return shader_module;
  }
-@@ -4678,6 +4868,8 @@
+@@ -4678,5 +4868,7 @@
      computePipelineCreateInfo.layout = pipeline_layout;
      computePipelineCreateInfo.basePipelineHandle = 0;
      computePipelineCreateInfo.basePipelineIndex = 0;
