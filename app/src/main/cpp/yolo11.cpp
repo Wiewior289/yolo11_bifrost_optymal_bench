@@ -11,6 +11,7 @@
 #include <utility>
 
 #include <android/log.h>
+#include <android/trace.h>
 #include <chrono>
 #include <new>
 #include <algorithm>
@@ -28,6 +29,16 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+
+namespace {
+class YoloTraceSection {
+public:
+    explicit YoloTraceSection(const char* name) { ATrace_beginSection(name); }
+    ~YoloTraceSection() { ATrace_endSection(); }
+    YoloTraceSection(const YoloTraceSection&) = delete;
+    YoloTraceSection& operator=(const YoloTraceSection&) = delete;
+};
+}
 
 namespace {
 static int tensor_tap_property(){char v[PROP_VALUE_MAX]={};return __system_property_get("debug.yolo11.tensor_tap",v)>0?std::atoi(v):0;}
@@ -1184,6 +1195,9 @@ int Yolo11::detect_cpu_or_vulkan(AHardwareBuffer* ahb,float conf_thresh,float nm
     }
 
     if(frame_id>0&&frame_id%30==0)log_tensor_stats("out0",out,frame_id,image_timestamp_ns);
+    char post_trace_name[64];
+    std::snprintf(post_trace_name, sizeof(post_trace_name), "YOLO_DFL_DECODE_FRAME_%lld", (long long)frame_id);
+    YoloTraceSection decode_trace(post_trace_name);
     const auto post_start = std::chrono::steady_clock::now();
     proposal_scratchpad.clear();
     decode_dfl_and_filter(out, conf_thresh);
@@ -1321,6 +1335,9 @@ int Yolo11::detect_ahb_compare(AHardwareBuffer* ahb,float conf_thresh,float nms_
 
 int Yolo11::detect_ahb(AHardwareBuffer* ahb,float conf_thresh,float nms_thresh,std::vector<Object>&objects,int rotate_type,int64_t frame_id,int64_t image_timestamp_ns,AhbCompareSnapshot* snapshot,ncnn::Mat* deferred_out0,AsyncFrameSlot* async_slot)
 {
+    char frame_trace_name[64];
+    std::snprintf(frame_trace_name, sizeof(frame_trace_name), "YOLO_NATIVE_GPU_FRAME_%lld", (long long)frame_id);
+    YoloTraceSection native_gpu_trace(frame_trace_name);
     // In full-GPU asynchronous mode the GPU worker must not touch decoder
     // state while the CPU worker is decoding the previous frame.
     if (!deferred_out0) {
@@ -1967,6 +1984,9 @@ int Yolo11::gpu_wait_frame(int slot_index)
     AsyncGpuExecution& execution = *slot.gpu_execution;
     const int64_t frame_id = slot.frame_id;
     const int64_t image_timestamp_ns = slot.image_timestamp_ns;
+    char wait_trace_name[64];
+    std::snprintf(wait_trace_name, sizeof(wait_trace_name), "YOLO_GPU_WAIT_FRAME_%lld", (long long)slot.frame_id);
+    YoloTraceSection wait_trace(wait_trace_name);
     const auto wait_start = std::chrono::steady_clock::now();
     const uint64_t wait_begin_steady_ns = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
