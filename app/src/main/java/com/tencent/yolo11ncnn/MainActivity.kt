@@ -14,6 +14,7 @@ import android.media.ImageReader
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
+import android.os.Trace
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
@@ -588,6 +589,7 @@ class MainActivity : AppCompatActivity() {
                     output.fill(0f)
                     var cpuStageRet = -1
                     val cpuStageStartNs = SystemClock.elapsedRealtimeNanos()
+                    Trace.beginSection("YOLO_POSTPROCESS_" + frameId)
                     Log.i(TAG, "ASYNC_CPU_STAGE_BEGIN frame=$frameId slot=$slot model=" + frameModel +
                         " input=" + frameInputSize + "x" + frameInputSize + " generation=" + frameGeneration +
                         " start_ns=$cpuStageStartNs queue_wait_ms=${(cpuStageStartNs - cpuQueuedAtNs) / 1_000_000.0} " +
@@ -599,6 +601,7 @@ class MainActivity : AppCompatActivity() {
                             yoloEngine.SuffixFrame(slot, output, confThreshold, nmsThreshold)
                         }
                         val cpuStageEndNs = SystemClock.elapsedRealtimeNanos()
+                        Trace.endSection()
                         val cpuStageWallMs = (cpuStageEndNs - cpuStageStartNs) / 1_000_000.0
                         updateProcessingFps()
                         val count = cpuStageRet.coerceAtLeast(0)
@@ -682,6 +685,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 val gpuStageStartNs = SystemClock.elapsedRealtimeNanos()
+                Trace.beginSection("YOLO_GPU_SUBMIT_" + frameId)
                 Log.i(TAG, "ASYNC_GPU_SUBMIT_BEGIN frame=$frameId slot=$slot fullGpu=$fullGpuMode " +
                     "model=" + frameModel + " input=" + frameInputSize + "x" + frameInputSize +
                     " generation=" + frameGeneration +
@@ -717,6 +721,7 @@ class MainActivity : AppCompatActivity() {
                     gpuFramesAwaitingFence.get()
                 }
                 val gpuStageEndNs = SystemClock.elapsedRealtimeNanos()
+                Trace.endSection()
                 val gpuStageWallMs = (gpuStageEndNs - gpuStageStartNs) / 1_000_000.0
                 Log.i(TAG, "ASYNC_GPU_SUBMIT_DONE frame=$frameId slot=$slot fullGpu=$fullGpuMode " +
                     "model=" + frameModel + " input=" + frameInputSize + "x" + frameInputSize +
@@ -734,6 +739,7 @@ class MainActivity : AppCompatActivity() {
                     val completionQueuedNs = SystemClock.elapsedRealtimeNanos()
                     val completionTask: () -> Unit = completionTask@{
                         val completionStartNs = SystemClock.elapsedRealtimeNanos()
+                        Trace.beginSection("YOLO_GPU_FENCE_WAIT_" + frameId)
                         Log.i(TAG, "ASYNC_GPU_WAIT_BEGIN frame=$frameId slot=$slot model=" + frameModel +
                             " input=" + frameInputSize + "x" + frameInputSize + " generation=" + frameGeneration +
                             " start_ns=$completionStartNs completion_queue_wait_ms=${(completionStartNs - completionQueuedNs) / 1_000_000.0} " +
@@ -764,6 +770,7 @@ class MainActivity : AppCompatActivity() {
                             gpuFramesAwaitingFence.get()
                         }
                         val completionEndNs = SystemClock.elapsedRealtimeNanos()
+                        Trace.endSection()
                         val completionWallMs = (completionEndNs - completionStartNs) / 1_000_000.0
                         Log.i(TAG, "ASYNC_GPU_COMPLETE_DONE frame=$frameId slot=$slot model=" + frameModel +
                             " input=" + frameInputSize + "x" + frameInputSize + " generation=" + frameGeneration +
@@ -933,11 +940,13 @@ class MainActivity : AppCompatActivity() {
                         } else {
                             try {
                                 val nativeStartNs = SystemClock.elapsedRealtimeNanos()
+                                Trace.beginSection("YOLO_DETECT_FRAME_" + frameId)
                                 rawCount = yoloEngine.DetectFrame(
                                     hwBuffer, detectionBuffer, confThreshold, nmsThreshold,
                                     rotateType, frameId, imageTimestampNs
                                 )
                                 nativeDetectWallMs = (SystemClock.elapsedRealtimeNanos() - nativeStartNs) / 1_000_000.0
+                                Trace.endSection()
                             } catch (e: Exception) {
                                 Log.e(TAG, "Błąd DetectFrame frame=$frameId", e)
                             } finally {
