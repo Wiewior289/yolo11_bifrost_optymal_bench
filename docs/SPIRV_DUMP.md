@@ -12,8 +12,13 @@ The hook is called at the start of the two-argument
 
 The three-argument overload first applies `inject_local_size_xyz()` and then calls this
 two-argument overload. Therefore the captured bytes include the final injected
-`LocalSize` values. PipelineCache hits and misses converge on this module-creation path;
-the independent `Pipeline::create()` path also reaches it.
+`LocalSize` values.
+
+The SPIR-V hook runs only when NCNN actually creates a shader module. An NCNN in-memory
+`PipelineCache` hit returns its existing shader module and pipeline and skips both
+module creation and `vkCreateComputePipelines()`. A cache miss creates the module and
+then creates the pipeline. The AHardwareBuffer import pipeline has a separate direct
+creation path, but it also reaches the same `VulkanDevice` methods.
 
 ## Specialization capture point
 
