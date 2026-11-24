@@ -639,7 +639,6 @@ class MainActivity : AppCompatActivity() {
                         try {
                             telemetryServer.sendDetections(jsonPayload)
                             markDebugDetectionReady(frameId)
-                            markDebugDetectionReady(frameId)
                         } catch (e: Exception) {
                             Log.e(TAG, "Błąd wysyłania telemetrii async", e)
                         }
@@ -987,6 +986,7 @@ class MainActivity : AppCompatActivity() {
                         val websocketStartNs = SystemClock.elapsedRealtimeNanos()
                         try {
                             telemetryServer.sendDetections(jsonPayload)
+                            markDebugDetectionReady(frameId)
                         } catch (e: Exception) {
                             Log.e(TAG, "Błąd wysyłania telemetrii", e)
                         }
