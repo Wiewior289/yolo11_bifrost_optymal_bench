@@ -184,6 +184,9 @@
       #confidencePanel .preset-buttons { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
       #confidencePanel button { padding: 7px 4px; font-size: 0.68rem; }
     }
+    #sceneLayer { transform-origin: center center; transition: transform 120ms linear; }
+    .record-toolbar button { min-height: 36px; }
+    @media (max-width: 600px) { .record-toolbar { margin-bottom: 10px !important; } }
     .status-alarm { background: #dc2626; color: #fff; animation: pulse 1s infinite; }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
   </style>
@@ -204,6 +207,12 @@
   </div>
 
   <!-- Próg pewności -->
+  <div class="card record-toolbar" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;">
+    <button class="btn-slate" id="btnRotate" onclick="toggleViewRotation()">Obrót widoku: 0°</button>
+    <button class="btn" id="btnRecord" onclick="toggleRecording()">● Nagraj</button>
+    <span id="recordStatus" style="font:12px monospace;color:#94a3b8;">Zapis wyłączony</span>
+  </div>
+
   <div id="confidencePanel" class="card" style="margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; gap: 20px;">
     <div style="flex: 1;">
       <div style="display: flex; justify-content: space-between; font-size: 12px; font-family: monospace; margin-bottom: 6px;">
@@ -222,6 +231,7 @@
   <div class="grid">
     <div class="card">
       <div class="video-viewport" id="viewport">
+        <div id="sceneLayer" style="position:absolute;inset:0;">
         <img id="cameraFrame" alt="Obraz diagnostyczny z kamery" />
         <!-- Granice stref -->
         <div class="line-horizon">
@@ -234,6 +244,7 @@
         </div>
         <div class="badge" id="cameraStatus" style="position:absolute;top:8px;right:8px;z-index:5;">OCZEKIWANIE NA OBRAZ</div>
         <div id="obstacleContainer"></div>
+        </div>
       </div>
 
     </div>
@@ -279,6 +290,167 @@
     let activeFrameUrl = null;
     let currentImageFrameId = null;
     const telemetryByFrame = new Map();
+
+
+    let viewRotated180 = false;
+    let mediaRecorder = null;
+    let recordingChunks = [];
+    let recordingJson = [];
+    let recordingFrameIds = new Set();
+    let recordCanvas = null;
+    let recordContext = null;
+    let recordStream = null;
+    let recordingStartedAt = 0;
+    let lastRecordedImage = null;
+    let latestTelemetry = null;
+    let recordAnimationId = 0;
+
+    function toggleViewRotation() {
+      viewRotated180 = !viewRotated180;
+      document.getElementById('sceneLayer').style.transform = viewRotated180 ? 'rotate(180deg)' : 'none';
+      document.getElementById('btnRotate').innerText = 'Obrót widoku: ' + (viewRotated180 ? '180°' : '0°');
+    }
+
+    function ensureRecordCanvas() {
+      if (recordCanvas) return;
+      recordCanvas = document.createElement('canvas');
+      recordCanvas.width = 1280;
+      recordCanvas.height = 720;
+      recordContext = recordCanvas.getContext('2d', { alpha: false });
+    }
+
+    function drawRecordingFrame() {
+      if (!mediaRecorder || mediaRecorder.state !== 'recording') return;
+      ensureRecordCanvas();
+      const ctx = recordContext;
+      const w = recordCanvas.width, h = recordCanvas.height;
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = '#020617';
+      ctx.fillRect(0, 0, w, h);
+      if (viewRotated180) {
+        ctx.translate(w, h);
+        ctx.rotate(Math.PI);
+      }
+      const img = document.getElementById('cameraFrame');
+      if (img.complete && img.naturalWidth > 0) {
+        const rotateType = lastRecordedImage ? lastRecordedImage.rotateType : 0;
+        if (rotateType === 6 || rotateType === 8) {
+          ctx.save();
+          ctx.translate(w / 2, h / 2);
+          ctx.rotate(rotateType === 6 ? Math.PI / 2 : -Math.PI / 2);
+          ctx.drawImage(img, -h / 2, -w / 2, h, w);
+          ctx.restore();
+        } else if (rotateType === 3) {
+          ctx.save();
+          ctx.translate(w, h);
+          ctx.rotate(Math.PI);
+          ctx.drawImage(img, 0, 0, w, h);
+          ctx.restore();
+        } else {
+          ctx.drawImage(img, 0, 0, w, h);
+        }
+      }
+      // Overlay geometry is normalized to the displayed frame.
+      const objects = latestTelemetry && Array.isArray(latestTelemetry.objects) ? latestTelemetry.objects : [];
+      objects.forEach(o => {
+        const x = o.x * w, y = o.y * h, bw = o.w * w, bh = o.h * h;
+        const color = o.zone === 0 ? '#22d3ee' : o.zone === 1 ? '#f59e0b' : '#10b981';
+        ctx.strokeStyle = color; ctx.lineWidth = 4;
+        ctx.fillStyle = color.replace(')', ',0.16)').replace('rgb', 'rgba');
+        ctx.strokeRect(x, y, bw, bh);
+        const name = (o.class >= 0 && o.class < COCO.length) ? COCO[o.class] : 'cls_' + o.class;
+        ctx.font = 'bold 18px monospace';
+        const label = name + ' ' + (Number(o.score) * 100).toFixed(0) + '%';
+        const labelW = Math.min(w - x, ctx.measureText(label).width + 12);
+        ctx.fillStyle = 'rgba(2,6,23,0.88)';
+        ctx.fillRect(x, Math.max(0, y - 26), labelW, 24);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(label, x + 6, Math.max(18, y - 8));
+      });
+      ctx.setLineDash([10, 8]);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(16,185,129,0.8)';
+      ctx.beginPath(); ctx.moveTo(0, h * 0.35); ctx.lineTo(w, h * 0.35); ctx.stroke();
+      ctx.strokeStyle = 'rgba(34,211,238,0.9)';
+      ctx.beginPath(); ctx.moveTo(0, h * 0.70); ctx.lineTo(w, h * 0.70); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+      recordAnimationId = requestAnimationFrame(drawRecordingFrame);
+    }
+
+    function chooseRecordingMime() {
+      const candidates = ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+      return candidates.find(type => window.MediaRecorder && MediaRecorder.isTypeSupported(type)) || '';
+    }
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
+
+    function toggleRecording() {
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        return;
+      }
+      if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) {
+        addLog('Nagrywanie niedostępne w tej przeglądarce.');
+        return;
+      }
+      ensureRecordCanvas();
+      const mimeType = chooseRecordingMime();
+      if (!mimeType) {
+        addLog('Brak obsługi kodeka MediaRecorder (MP4/WebM).');
+        return;
+      }
+      recordingChunks = [];
+      recordingJson = [];
+      recordingFrameIds = new Set();
+      recordStream = recordCanvas.captureStream(15);
+      try {
+        mediaRecorder = new MediaRecorder(recordStream, { mimeType });
+      } catch (e) {
+        addLog('Nie można uruchomić MediaRecorder: ' + e.message);
+        recordStream.getTracks().forEach(t => t.stop());
+        return;
+      }
+      mediaRecorder.ondataavailable = e => { if (e.data && e.data.size) recordingChunks.push(e.data); };
+      mediaRecorder.onerror = e => addLog('Błąd nagrywania: ' + (e.error?.message || 'nieznany'));
+      mediaRecorder.onstop = () => {
+        cancelAnimationFrame(recordAnimationId);
+        const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const videoBlob = new Blob(recordingChunks, { type: mimeType });
+        const jsonBlob = new Blob([JSON.stringify({
+          format: 'yolo11-dashboard-recording-v1',
+          startedAt: new Date(recordingStartedAt).toISOString(),
+          stoppedAt: new Date().toISOString(),
+          videoFile: 'yolo-' + stamp + '.' + ext,
+          videoMimeType: mimeType,
+          viewRotationDegrees: viewRotated180 ? 180 : 0,
+          frameCount: recordingJson.length,
+          frames: recordingJson
+        }, null, 2)], { type: 'application/json' });
+        downloadBlob(videoBlob, 'yolo-' + stamp + '.' + ext);
+        downloadBlob(jsonBlob, 'yolo-' + stamp + '.json');
+        if (recordStream) recordStream.getTracks().forEach(t => t.stop());
+        document.getElementById('btnRecord').innerText = '● Nagraj';
+        document.getElementById('btnRecord').className = 'btn';
+        document.getElementById('recordStatus').innerText = 'Zapisano ' + recordingJson.length + ' rekordów JSON';
+        addLog('Nagranie i JSON przygotowane do pobrania (' + ext + ').');
+      };
+      recordingStartedAt = Date.now();
+      document.getElementById('btnRecord').innerText = '■ Zatrzymaj';
+      document.getElementById('btnRecord').className = 'btn btn-red';
+      document.getElementById('recordStatus').innerText = 'NAGRYWANIE · ' + mimeType;
+      mediaRecorder.start(1000);
+      drawRecordingFrame();
+      addLog('Rozpoczęto nagrywanie: ' + mimeType);
+    }
 
     function addLog(msg) {
       const b = document.getElementById('logBox');
@@ -353,6 +525,8 @@
         if (previousUrl) URL.revokeObjectURL(previousUrl);
         activeFrameUrl = url;
         currentImageFrameId = frameId;
+        lastRecordedImage = { frameId, width, height, rotateType, imageTimestampNs: Number(view.getBigInt64(8)) };
+
         const quarterTurn = rotateType === 6 || rotateType === 8;
         viewport.style.aspectRatio = quarterTurn ? (height + ' / ' + width) : (width + ' / ' + height);
         if (quarterTurn) {
@@ -379,6 +553,28 @@
       image.src = url;
     }
     function handleTelemetry(d) {
+      latestTelemetry = d;
+      if (mediaRecorder && mediaRecorder.state === 'recording' && d.frameId !== undefined) {
+        const id = Number(d.frameId);
+        if (!recordingFrameIds.has(id)) {
+          recordingFrameIds.add(id);
+          recordingJson.push({
+            frameId: id,
+            imageTimestampNs: d.imageTimestampNs ?? null,
+            receivedAt: new Date().toISOString(),
+            fps: d.fps ?? null,
+            conf: d.conf ?? null,
+            count: d.count ?? (d.objects || []).length,
+            topScore: d.topScore ?? null,
+            topClass: d.topClass ?? null,
+            objects: Array.isArray(d.objects) ? d.objects.map(o => ({
+              zone: o.zone, class: o.class, score: o.score,
+              x: o.x, y: o.y, w: o.w, h: o.h
+            })) : []
+          });
+        }
+      }
+
       if (d.frameId !== undefined) {
         telemetryByFrame.set(Number(d.frameId), d);
         while (telemetryByFrame.size > 64) telemetryByFrame.delete(telemetryByFrame.keys().next().value);
