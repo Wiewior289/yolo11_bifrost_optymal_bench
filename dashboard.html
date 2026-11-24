@@ -162,6 +162,28 @@
       font-family: monospace;
     }
     .status-ok { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+    @media (max-width: 600px) {
+      body { padding: 8px; }
+      .header { gap: 8px; margin-bottom: 10px; padding-bottom: 10px; }
+      .title-box h1 { font-size: 1rem; }
+      .title-box p { font-size: 0.65rem; }
+      .badge { font-size: 0.65rem; padding: 3px 7px; }
+      .conn-bar { flex-wrap: wrap; gap: 7px; padding: 10px; margin-bottom: 10px; }
+      .conn-bar input { flex: 1 1 100%; min-width: 0; }
+      .conn-bar button { flex: 1 1 auto; padding: 9px 8px; font-size: 0.75rem; }
+      .card { padding: 10px; border-radius: 12px; }
+      .grid { gap: 10px; }
+      .video-viewport { margin-bottom: 8px; border-radius: 8px; }
+      .metrics { gap: 6px; margin-bottom: 8px; }
+      .metric-box { padding: 8px; }
+      .metric-box strong { font-size: 1rem; }
+      .log-box { height: 110px; }
+      .line-horizon, .line-near { font-size: 8px; padding: 1px 4px; }
+      .obstacle-tag { font-size: 8px; }
+      #confidencePanel { flex-direction: column; align-items: stretch !important; gap: 10px !important; }
+      #confidencePanel .preset-buttons { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+      #confidencePanel button { padding: 7px 4px; font-size: 0.68rem; }
+    }
     .status-alarm { background: #dc2626; color: #fff; animation: pulse 1s infinite; }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
   </style>
@@ -183,7 +205,7 @@
   </div>
 
   <!-- Próg pewności -->
-  <div class="card" style="margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; gap: 20px;">
+  <div id="confidencePanel" class="card" style="margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; gap: 20px;">
     <div style="flex: 1;">
       <div style="display: flex; justify-content: space-between; font-size: 12px; font-family: monospace; margin-bottom: 6px;">
         <span>Próg Pewności (Confidence Threshold):</span>
@@ -191,7 +213,7 @@
       </div>
       <input type="range" id="confSlider" min="0.02" max="0.75" step="0.01" value="0.25" style="width: 100%; cursor: pointer;" oninput="onConfChange(this.value)">
     </div>
-    <div>
+    <div class="preset-buttons">
       <button class="btn-slate" onclick="setConf(0.05)">5% (Czuły)</button>
       <button class="btn-slate" onclick="setConf(0.15)">15% (Średni)</button>
       <button class="btn-slate" onclick="setConf(0.25)">25% (Standard)</button>
