@@ -67,6 +67,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var debugFrameExecutor: ExecutorService
     private val debugFrameBusy = AtomicBoolean(false)
     private val lastDebugFrameMs = AtomicLong(0L)
+    private val debugPairLock = Any()
+    private val debugSelectedFrameIds = HashSet<Long>()
+    private val debugReadyDetectionIds = HashSet<Long>()
+    private val debugPendingJpegs = HashMap<Long, DebugJpegFrame>()
 
     // Camera2 background thread & components
     private var cameraThread: HandlerThread? = null
@@ -576,6 +580,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        captureDebugFrameIfNeeded(image, frameId, imageTimestampNs, rotateType)
         val queuedAtNs = SystemClock.elapsedRealtimeNanos()
         val frameModel = modelLabel(selectedModelType)
         val frameInputSize = modelInputSize
@@ -633,6 +638,8 @@ class MainActivity : AppCompatActivity() {
                         )
                         try {
                             telemetryServer.sendDetections(jsonPayload)
+                            markDebugDetectionReady(frameId)
+                            markDebugDetectionReady(frameId)
                         } catch (e: Exception) {
                             Log.e(TAG, "Błąd wysyłania telemetrii async", e)
                         }
@@ -908,8 +915,6 @@ class MainActivity : AppCompatActivity() {
                     270 -> 8
                     else -> 1
                 }
-                captureDebugFrameIfNeeded(image, frameId, imageTimestampNs, rotateType)
-
                 if (asyncFullGpuMode) {
                     queueAsyncFrame(image, frameId, imageTimestampNs, rotateType, callbackStartNs)
                     return@setOnImageAvailableListener
@@ -922,6 +927,7 @@ class MainActivity : AppCompatActivity() {
                     return@setOnImageAvailableListener
                 }
 
+                captureDebugFrameIfNeeded(image, frameId, imageTimestampNs, rotateType)
                 val queuedAtNs = SystemClock.elapsedRealtimeNanos()
                 backgroundInitExecutor.execute {
                     val taskStartNs = SystemClock.elapsedRealtimeNanos()
@@ -1141,9 +1147,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private data class DebugFrame(val frameId: Long, val imageTimestampNs: Long, val width: Int, val height: Int, val rotateType: Int, val nv21: ByteArray)
+    private data class DebugJpegFrame(val frameId: Long, val imageTimestampNs: Long, val width: Int, val height: Int, val rotateType: Int, val jpeg: ByteArray)
 
-    // Diagnostic-only tap: bounded to one in-flight frame and 5 FPS. It copies
-    // the YUV planes while Image is valid; JPEG and WebSocket work run elsewhere.
+    // Diagnostic tap runs only after a frame has been accepted by the inference path.
+    // It copies Image planes into host memory; it never retains Image or HardwareBuffer.
+    // The JPEG is held until the matching YOLO telemetry for the same frameId exists.
     private fun captureDebugFrameIfNeeded(image: Image, frameId: Long, imageTimestampNs: Long, rotateType: Int) {
         if (!::telemetryServer.isInitialized || !telemetryServer.hasOpenClients()) return
         val nowMs = SystemClock.elapsedRealtime()
@@ -1162,24 +1170,69 @@ class MainActivity : AppCompatActivity() {
             Log.w(TAG, "DEBUG_FRAME_COPY_FAILED frame=$frameId", e)
             return
         }
+        synchronized(debugPairLock) { debugSelectedFrameIds.add(frameId) }
         try {
             debugFrameExecutor.execute {
                 try {
                     val jpeg = ByteArrayOutputStream()
                     val yuv = YuvImage(frame.nv21, ImageFormat.NV21, frame.width, frame.height, null)
                     if (yuv.compressToJpeg(Rect(0, 0, frame.width, frame.height), DEBUG_JPEG_QUALITY, jpeg)) {
-                        telemetryServer.sendDebugFrame(frame.frameId, frame.imageTimestampNs, frame.width, frame.height, frame.rotateType, jpeg.toByteArray())
+                        val packet = DebugJpegFrame(frame.frameId, frame.imageTimestampNs,
+                            frame.width, frame.height, frame.rotateType, jpeg.toByteArray())
+                        var sendNow = false
+                        synchronized(debugPairLock) {
+                            if (debugReadyDetectionIds.remove(frame.frameId)) {
+                                debugSelectedFrameIds.remove(frame.frameId)
+                                sendNow = true
+                            } else {
+                                debugPendingJpegs[frame.frameId] = packet
+                            }
+                        }
+                        if (sendNow) sendPairedDebugFrame(packet)
                     } else {
                         Log.w(TAG, "DEBUG_JPEG_ENCODE_FAILED frame=${frame.frameId}")
+                        clearDebugPair(frame.frameId)
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "DEBUG_FRAME_SEND_FAILED frame=${frame.frameId}", e)
-                } finally { debugFrameBusy.set(false) }
+                    Log.w(TAG, "DEBUG_FRAME_ENCODE_FAILED frame=${frame.frameId}", e)
+                    clearDebugPair(frame.frameId)
+                }
             }
         } catch (e: Exception) {
-            debugFrameBusy.set(false)
+            clearDebugPair(frameId)
             Log.w(TAG, "DEBUG_FRAME_QUEUE_FAILED frame=$frameId", e)
         }
+    }
+
+    private fun markDebugDetectionReady(frameId: Long) {
+        var packet: DebugJpegFrame? = null
+        synchronized(debugPairLock) {
+            if (!debugSelectedFrameIds.contains(frameId)) return
+            packet = debugPendingJpegs.remove(frameId)
+            if (packet != null) debugSelectedFrameIds.remove(frameId)
+            else debugReadyDetectionIds.add(frameId)
+        }
+        packet?.let { sendPairedDebugFrame(it) }
+    }
+
+    private fun sendPairedDebugFrame(frame: DebugJpegFrame) {
+        try {
+            telemetryServer.sendDebugFrame(frame.frameId, frame.imageTimestampNs,
+                frame.width, frame.height, frame.rotateType, frame.jpeg)
+        } catch (e: Exception) {
+            Log.w(TAG, "DEBUG_FRAME_SEND_FAILED frame=${frame.frameId}", e)
+        } finally {
+            debugFrameBusy.set(false)
+        }
+    }
+
+    private fun clearDebugPair(frameId: Long) {
+        synchronized(debugPairLock) {
+            debugSelectedFrameIds.remove(frameId)
+            debugReadyDetectionIds.remove(frameId)
+            debugPendingJpegs.remove(frameId)
+        }
+        debugFrameBusy.set(false)
     }
 
     // Converts strided YUV_420_888 planes to tightly packed NV21 (VU chroma order).
