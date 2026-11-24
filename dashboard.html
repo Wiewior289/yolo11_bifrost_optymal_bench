@@ -192,15 +192,14 @@
   <div class="header">
     <div class="title-box">
       <h1>Kosiarka YOLO11 Vision Dashboard (Lokalny Klient)</h1>
-      <p>Direct WebSocket: ADB USB (localhost:8080) lub Wi-Fi (192.168.223.127:8080)</p>
+      <p>Direct WebSocket: USB (localhost:8080) lub Wi-Fi (adres IP telefonu w robocie, port 8080)</p>
     </div>
     <div class="badge">FRAME: <span id="frameVal">-</span></div>
   </div>
 
   <div class="conn-bar card">
-    <input type="text" id="wsInput" value="ws://localhost:8080">
+    <input type="text" id="wsInput" value="ws://localhost:8080" placeholder="ws://ADRES_IP_ROBOTA:8080">
     <button class="btn-slate" onclick="setTarget('ws://localhost:8080')">USB (localhost)</button>
-    <button class="btn-slate" onclick="setTarget('ws://192.168.223.127:8080')">Wi-Fi (S9+)</button>
     <button class="btn" id="btnConnect" onclick="toggleConnect()">Połącz</button>
   </div>
 
