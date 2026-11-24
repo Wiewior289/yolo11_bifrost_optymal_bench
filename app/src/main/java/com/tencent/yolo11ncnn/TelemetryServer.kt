@@ -5,6 +5,7 @@ import org.java_websocket.handshake.ClientHandshake
 import org.java_websocket.WebSocket
 import java.net.InetSocketAddress
 import android.util.Log
+import java.nio.ByteBuffer
 
 class TelemetryServer(
     port: Int = 8080,
@@ -59,5 +60,23 @@ class TelemetryServer(
 
     fun sendDetections(jsonPayload: String) {
         try { broadcast(jsonPayload) } catch (_: Exception) {}
+    }
+
+    fun hasOpenClients(): Boolean = connections.any { it.isOpen }
+
+    // Binary packet: frameId(8), imageTimestampNs(8), width(4), height(4), rotateType(4), JPEG bytes.
+    fun sendDebugFrame(frameId: Long, imageTimestampNs: Long, width: Int, height: Int, rotateType: Int, jpeg: ByteArray) {
+        if (jpeg.isEmpty()) return
+        val packet = ByteBuffer.allocate(28 + jpeg.size)
+        packet.putLong(frameId).putLong(imageTimestampNs).putInt(width).putInt(height).putInt(rotateType).put(jpeg)
+        packet.flip()
+        try {
+            connections.filter { it.isOpen }.forEach { conn ->
+                try { conn.send(packet.asReadOnlyBuffer()) }
+                catch (e: Exception) { Log.w("TelemetryServer", "Debug frame send failed: " + e.message) }
+            }
+        } catch (e: Exception) {
+            Log.w("TelemetryServer", "Debug frame broadcast failed: " + e.message)
+        }
     }
 }

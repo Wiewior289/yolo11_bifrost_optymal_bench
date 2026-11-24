@@ -8,9 +8,12 @@ import android.util.Size
 import androidx.appcompat.app.AppCompatActivity
 import android.content.Context
 import android.graphics.ImageFormat
+import android.graphics.Rect
+import android.graphics.YuvImage
 import android.hardware.HardwareBuffer
 import android.hardware.camera2.*
 import android.media.ImageReader
+import android.media.Image
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
@@ -27,6 +30,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicIntegerArray
 import java.util.concurrent.atomic.AtomicLong
@@ -60,6 +64,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var gpuCompletionExecutor: ExecutorService
     private val deferredCameraImageReleases = ConcurrentLinkedQueue<() -> Unit>()
     private lateinit var cpuFrameExecutor: ExecutorService
+    private lateinit var debugFrameExecutor: ExecutorService
+    private val debugFrameBusy = AtomicBoolean(false)
+    private val lastDebugFrameMs = AtomicLong(0L)
 
     // Camera2 background thread & components
     private var cameraThread: HandlerThread? = null
@@ -96,6 +103,7 @@ class MainActivity : AppCompatActivity() {
         gpuFrameExecutor = Executors.newSingleThreadExecutor()
         gpuCompletionExecutor = Executors.newSingleThreadExecutor()
         cpuFrameExecutor = Executors.newSingleThreadExecutor()
+        debugFrameExecutor = Executors.newSingleThreadExecutor()
 
         // Start telemetry before installing the selector, so an early spinner
         // callback can safely report a mode change.
@@ -900,6 +908,7 @@ class MainActivity : AppCompatActivity() {
                     270 -> 8
                     else -> 1
                 }
+                captureDebugFrameIfNeeded(image, frameId, imageTimestampNs, rotateType)
 
                 if (asyncFullGpuMode) {
                     queueAsyncFrame(image, frameId, imageTimestampNs, rotateType, callbackStartNs)
@@ -1131,6 +1140,71 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private data class DebugFrame(val frameId: Long, val imageTimestampNs: Long, val width: Int, val height: Int, val rotateType: Int, val nv21: ByteArray)
+
+    // Diagnostic-only tap: bounded to one in-flight frame and 5 FPS. It copies
+    // the YUV planes while Image is valid; JPEG and WebSocket work run elsewhere.
+    private fun captureDebugFrameIfNeeded(image: Image, frameId: Long, imageTimestampNs: Long, rotateType: Int) {
+        if (!::telemetryServer.isInitialized || !telemetryServer.hasOpenClients()) return
+        val nowMs = SystemClock.elapsedRealtime()
+        if (nowMs - lastDebugFrameMs.get() < DEBUG_FRAME_INTERVAL_MS) return
+        if (!debugFrameBusy.compareAndSet(false, true)) return
+        lastDebugFrameMs.set(nowMs)
+        val frame = try {
+            val crop = image.cropRect
+            val width = crop.width() and -2
+            val height = crop.height() and -2
+            if (width <= 0 || height <= 0) { debugFrameBusy.set(false); return }
+            DebugFrame(frameId, imageTimestampNs, width, height, rotateType,
+                copyYuv420888ToNv21(image, width, height, crop.left, crop.top))
+        } catch (e: Exception) {
+            debugFrameBusy.set(false)
+            Log.w(TAG, "DEBUG_FRAME_COPY_FAILED frame=$frameId", e)
+            return
+        }
+        try {
+            debugFrameExecutor.execute {
+                try {
+                    val jpeg = ByteArrayOutputStream()
+                    val yuv = YuvImage(frame.nv21, ImageFormat.NV21, frame.width, frame.height, null)
+                    if (yuv.compressToJpeg(Rect(0, 0, frame.width, frame.height), DEBUG_JPEG_QUALITY, jpeg)) {
+                        telemetryServer.sendDebugFrame(frame.frameId, frame.imageTimestampNs, frame.width, frame.height, frame.rotateType, jpeg.toByteArray())
+                    } else {
+                        Log.w(TAG, "DEBUG_JPEG_ENCODE_FAILED frame=${frame.frameId}")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "DEBUG_FRAME_SEND_FAILED frame=${frame.frameId}", e)
+                } finally { debugFrameBusy.set(false) }
+            }
+        } catch (e: Exception) {
+            debugFrameBusy.set(false)
+            Log.w(TAG, "DEBUG_FRAME_QUEUE_FAILED frame=$frameId", e)
+        }
+    }
+
+    // Converts strided YUV_420_888 planes to tightly packed NV21 (VU chroma order).
+    private fun copyYuv420888ToNv21(image: Image, width: Int, height: Int, cropLeft: Int, cropTop: Int): ByteArray {
+        val yp = image.planes[0]; val up = image.planes[1]; val vp = image.planes[2]
+        val yb = yp.buffer.duplicate(); val ub = up.buffer.duplicate(); val vb = vp.buffer.duplicate()
+        val yPosition = yb.position(); val uPosition = ub.position(); val vPosition = vb.position()
+        val output = ByteArray(width * height * 3 / 2)
+        var out = 0
+        for (row in 0 until height) {
+            val base = yPosition + (cropTop + row) * yp.rowStride + cropLeft * yp.pixelStride
+            for (col in 0 until width) output[out++] = yb.get(base + col * yp.pixelStride)
+        }
+        val cw = width / 2; val ch = height / 2
+        val cl = cropLeft / 2; val ct = cropTop / 2
+        for (row in 0 until ch) {
+            val ub0 = uPosition + (ct + row) * up.rowStride + cl * up.pixelStride
+            val vb0 = vPosition + (ct + row) * vp.rowStride + cl * vp.pixelStride
+            for (col in 0 until cw) {
+                output[out++] = vb.get(vb0 + col * vp.pixelStride)
+                output[out++] = ub.get(ub0 + col * up.pixelStride)
+            }
+        }
+        return output
+    }
     private fun buildJson(
         count: Int, data: FloatArray, fpsVal: Float, topScore: Float, topClass: Int,
         frameId: Long, imageTimestampNs: Long
@@ -1222,6 +1296,7 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 Log.e(TAG, "Błąd zamykania TelemetryServer", e)
             }
+            debugFrameExecutor.shutdown()
         }
 
         // Drain in producer -> completion -> CPU consumer order. GPU submission
@@ -1306,6 +1381,8 @@ class MainActivity : AppCompatActivity() {
         private const val MODEL_INPUT_SIZE_MIN = 320
         private const val MODEL_INPUT_SIZE_MAX = 480
         private const val MODEL_INPUT_SIZE_STEP = 32
+        private const val DEBUG_FRAME_INTERVAL_MS = 200L
+        private const val DEBUG_JPEG_QUALITY = 62
         private const val REQUEST_CODE_PERMISSIONS = 10
         private val REQUIRED_PERMISSIONS = arrayOf(
             Manifest.permission.CAMERA,
